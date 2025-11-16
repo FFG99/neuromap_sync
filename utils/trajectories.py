@@ -1,5 +1,4 @@
 import numpy as np
-from matplotlib import pyplot as plt
 
 
 def pass_transient_process(evolution_operator, state, params, dt, 
@@ -27,6 +26,7 @@ def pass_transient_process(evolution_operator, state, params, dt,
                 number_of_intersections += 1
                 
     return current_state
+
 
 def get_attractor_trajectory(evolution_operator, state, params, dt, 
                              n_transient, n_attractor, secant_plane,
@@ -66,27 +66,3 @@ def get_attractor_trajectory(evolution_operator, state, params, dt,
 
     return attractor_trajectory
 
-def plot_trajectory(traj, 
-    variables_names=None):
-    if len(traj) == 0:
-        raise ValueError
-    
-    dimension = len(traj[0])
-    match dimension:
-        case 2:
-            xs = [x for (x, y) in traj]
-            ys = [y for (x, y) in traj]
-            
-            plt.scatter(xs, ys, s=0.1)
-            if variables_names is None:
-                plt.xlabel(r'$x$')
-                plt.ylabel(r'$\dot{x}$')
-            else:
-                plt.xlabel(variables_names[0])
-                plt.ylabel(variables_names[1])
-            plt.tight_layout()
-            plt.show()
-        case 4:
-            raise NotImplementedError
-        case _:
-            raise ValueError(f"Trajectory dimension={dimension} is not supported")
