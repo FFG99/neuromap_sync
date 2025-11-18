@@ -1,9 +1,15 @@
+import numpy as np
 from matplotlib import pyplot as plt
+from .logger import get_logger
+
+logger = get_logger(__name__)
+
 
 def plot_trajectory(traj, 
     variables_names=None):
+    
     if len(traj) == 0:
-        raise ValueError
+        raise ValueError("Траектория не может быть пустой")
     
     dimension = len(traj[0])
     match dimension:
@@ -47,4 +53,18 @@ def plot_trajectory(traj,
             plt.tight_layout()
             plt.show()
         case _:
-            raise ValueError(f"Trajectory dimension={dimension} is not supported")
+            raise ValueError(f"Траектория размерности {dimension} не поддерживается")
+
+def plot_heatmap(x, y, Z):
+    X, Y = np.meshgrid(x, y)
+
+    fig, ax = plt.subplots(figsize=(10, 8))
+    cs = ax.contourf(X, Y, Z, levels=50, cmap="plasma")
+
+    cbar = fig.colorbar(cs, ax=ax)
+
+    ax.set_xlabel("x")
+    ax.set_ylabel("y")
+
+    plt.tight_layout()
+    plt.show()

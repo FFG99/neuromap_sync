@@ -1,9 +1,16 @@
 import numpy as np
+from .logger import get_logger
+from typing import List
+from joblib import Parallel, delayed
+from tqdm import tqdm
+
+logger = get_logger(__name__)
 
 
 def pass_transient_process(evolution_operator, state, params, dt, 
                            required_number_of_intersections, secant_plane,
-                           max_steps=100_000_000) -> np.ndarray | None:
+                           fixed_point_threshold=1e-12, max_steps=100_000_000) -> np.ndarray | None:
+    logger.debug(f"Начало прохождения переходного процесса: required_intersections={required_number_of_intersections}, max_steps={max_steps}")
     
     number_of_intersections = 0
     step_count = 0
@@ -13,18 +20,22 @@ def pass_transient_process(evolution_operator, state, params, dt,
     while number_of_intersections < required_number_of_intersections:
         step_count += 1
         if step_count > max_steps:
-            return None
+            raise ValueError(f"Достигнуто максимальное количество шагов ({max_steps}). Прерывание процесса.")
         
         previous_state = current_state
         current_state = evolution_operator(current_state, params, dt)
-            
-        if previous_state is not None:
-            S_prev = secant_plane(previous_state)
-            S_curr = secant_plane(current_state)
-            
-            if S_prev < 0 and S_curr >= 0:
-                number_of_intersections += 1
-                
+
+        if np.linalg.norm(current_state - previous_state) < fixed_point_threshold:
+            return current_state
+
+        S_prev = secant_plane(previous_state)
+        S_curr = secant_plane(current_state)
+        
+        if S_prev < 0 and S_curr >= 0:
+            number_of_intersections += 1
+            logger.debug(f"Пересечение #{number_of_intersections} на шаге {step_count}")
+    
+    logger.debug(f"Переходный процесс завершен: intersections={number_of_intersections}, steps={step_count}")
     return current_state
 
 
@@ -32,9 +43,13 @@ def get_attractor_trajectory(evolution_operator, state, params, dt,
                              n_transient, n_attractor, secant_plane,
                              accuracy=1e-4, max_steps=100_000_000,
                              fixed_point_threshold=1e-12):
+    
+    logger.debug(f"Начало получения траектории аттрактора: n_transient={n_transient}, n_attractor={n_attractor}, accuracy={accuracy}")
 
     state = pass_transient_process(evolution_operator, state, params,
-                                   dt, n_transient, secant_plane, max_steps)
+                                   dt, n_transient, secant_plane, fixed_point_threshold, max_steps)
+    
+    logger.debug(f"Состояние после переходного процесса: {state}")
 
     attractor_trajectory = []
     number_of_intersections = 0
@@ -46,6 +61,7 @@ def get_attractor_trajectory(evolution_operator, state, params, dt,
         state = evolution_operator(state, params, dt)
         
         if np.linalg.norm(state - previous_state) < fixed_point_threshold:
+            logger.debug(f"Обнаружена неподвижная точка (threshold={fixed_point_threshold}). Возврат точки.")
             return [state]
         
         attractor_trajectory.append(state)
@@ -58,11 +74,63 @@ def get_attractor_trajectory(evolution_operator, state, params, dt,
 
             if first_point is None:
                 first_point = sect_point
+                logger.debug(f"Первая точка пересечения: {first_point}")
             else:
-                if np.linalg.norm(sect_point - first_point) < accuracy:
+                distance = np.linalg.norm(sect_point - first_point)
+                logger.debug(f"Расстояние до первой точки: {distance}")
+                if distance < accuracy:
+                    logger.debug(f"Замкнутая орбита обнаружена (accuracy={accuracy}). Траектория содержит {len(attractor_trajectory)} точек.")
                     return attractor_trajectory
             
             number_of_intersections += 1
+            logger.debug(f"Пересечение аттрактора #{number_of_intersections}")
 
-    return attractor_trajectory
+    logger.debug(f"Траектория аттрактора получена: {len(attractor_trajectory)} точек, {number_of_intersections} пересечений")
+    return np.array(attractor_trajectory)
 
+
+def grid_of_amplitude(evolution_operator,
+                      state,
+                      params: List[np.ndarray],
+                      dt,
+                      n_transient,
+                      n_attractor,
+                      secant_plane,
+                      accuracy: float = 0.0001,
+                      max_steps: int = 100_000_000,
+                      fixed_point_threshold: float = 1e-12,
+                      n_jobs: int = -1) -> np.ndarray:
+    """
+    Параллельно строит 2-D поле амплитуд аттракторов.
+    state = [x_grid, y_grid] – список из двух np.ndarray (линейки).
+    Возвращает Z[i, j] = ‖range(attractor([x[j], y[i]]))‖
+    """
+    x_grid, y_grid = params
+
+    Z = np.empty((len(y_grid), len(x_grid)))
+
+    def worker(i_y: int) -> tuple[int, np.ndarray]:
+        y_val = y_grid[i_y]
+        row = np.array([
+            np.linalg.norm(np.ptp(get_attractor_trajectory(
+                evolution_operator,
+                state,
+                [xi, y_val],
+                dt,
+                n_transient,
+                n_attractor,
+                secant_plane,
+                accuracy,
+                max_steps,
+                fixed_point_threshold), axis=0))
+            for xi in x_grid
+        ])
+        return i_y, row
+
+    with tqdm(total=len(y_grid), desc="Вычисление сетки (по строкам)") as pbar:
+        for i_y, row in Parallel(n_jobs=n_jobs, backend='loky')(
+                delayed(worker)(i) for i in range(len(y_grid))):
+            Z[i_y] = row
+            pbar.update(1)
+
+    return Z

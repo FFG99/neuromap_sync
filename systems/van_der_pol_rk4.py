@@ -1,5 +1,9 @@
 import numpy as np
 from utils.rk4 import rk4_step_vectorized_params
+from utils.logger import get_logger
+
+logger = get_logger(__name__)
+
 
 def van_der_pol_right_part(state, params):
     x, dx = state
