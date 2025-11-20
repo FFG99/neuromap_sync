@@ -6,7 +6,8 @@ logger = get_logger(__name__)
 
 
 def plot_trajectory(traj, 
-    variables_names=None):
+    variables_names=None,
+    title=None):
     
     if len(traj) == 0:
         raise ValueError("Траектория не может быть пустой")
@@ -24,6 +25,9 @@ def plot_trajectory(traj,
             else:
                 plt.xlabel(variables_names[0])
                 plt.ylabel(variables_names[1])
+
+            if title:
+                plt.title(title)
 
             plt.tight_layout()
             plt.show()
