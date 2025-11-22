@@ -2,26 +2,27 @@ import torch
 import torch.nn as nn
 import numpy as np
 from tqdm import tqdm
+from pathlib import Path
+import pytorch_lightning as pl
+from pytorch_lightning.callbacks import ModelCheckpoint
+from pytorch_lightning.callbacks.progress import TQDMProgressBar
 
 from utils.logger import get_logger
 
-class NeuroMap1(nn.Module):
+
+class NeuroMap1(pl.LightningModule):
     
-    def __init__(self, n_var, n_param, hidden_size=50, dt=0.01, device=None):
+    def __init__(self, n_var, n_param, hidden_size=50, dt=0.01, lr=1e-3):
         super().__init__()
+        self.save_hyperparameters()
+        
         self.n_var = n_var
         self.n_param = n_param
         self.hidden_size = hidden_size
         self.dt = dt
+        self.lr = lr
         
-        self.logger = get_logger(__name__)
-        
-        if device is None:
-            self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-        else:
-            self.device = torch.device(device)
-        
-        self.logger.info(f"device: {self.device}")
+        self.logger_py = get_logger(__name__)
         
         self.register_buffer('mu_u', torch.zeros(1, n_var))
         self.register_buffer('su', torch.ones(1, n_var))
@@ -34,7 +35,7 @@ class NeuroMap1(nn.Module):
         self.activation = nn.Tanh()
         self.output = nn.Linear(hidden_size, n_var)
         
-        self.to(self.device)
+        self.criterion = nn.MSELoss()
     
     def forward(self, u, p):
         u_norm = (u - self.mu_u) / self.su
@@ -47,8 +48,35 @@ class NeuroMap1(nn.Module):
         d = self.dt * (g * self.sd + self.mu_d)
         return d
     
+    def training_step(self, batch, batch_idx):
+        X_batch, y_batch = batch
+        u_batch = X_batch[:, :self.n_var]
+        p_batch = X_batch[:, self.n_var:self.n_var + self.n_param]
+        
+        pred = self.forward(u_batch, p_batch)
+        loss = self.criterion(pred, y_batch)
+        
+        self.log('train_loss', loss, on_step=True, on_epoch=True, prog_bar=True)
+        return loss
+    
+    def validation_step(self, batch, batch_idx):
+        X_batch, y_batch = batch
+        u_batch = X_batch[:, :self.n_var]
+        p_batch = X_batch[:, self.n_var:self.n_var + self.n_param]
+        
+        pred = self.forward(u_batch, p_batch)
+        loss = self.criterion(pred, y_batch)
+        
+        self.log('val_loss', loss, on_step=False, on_epoch=True, prog_bar=True)
+        return loss
+    
+    def configure_optimizers(self):
+        return torch.optim.Adam(self.parameters(), lr=self.lr)
+    
     def fit(self, X, y, epochs=1000, lr=1e-3, batch_size=64, val_split=0.1,
-        val_every=10, log_every=100, verbose=True):
+            val_every=10, log_every=100, verbose=True):
+        """Обучение модели (совместимость с предыдущим API)"""
+        self.lr = lr
         self._compute_statistics(X, y)
 
         N = len(X)
@@ -56,68 +84,55 @@ class NeuroMap1(nn.Module):
         X_train, X_val = X[:n_train], X[n_train:]
         y_train, y_val = y[:n_train], y[n_train:]
 
-        self.logger.info(f"Тренировка: {len(X_train):,} | Валидация: {len(X_val):,}")
+        self.logger_py.info(f"Тренировка: {len(X_train):,} | Валидация: {len(X_val):,}")
 
-        X_train_tensor = torch.tensor(X_train, dtype=torch.float32, device=self.device)
-        y_train_tensor = torch.tensor(y_train, dtype=torch.float32, device=self.device)
-
-        dataset = torch.utils.data.TensorDataset(X_train_tensor, y_train_tensor)
-        dataloader = torch.utils.data.DataLoader(
-            dataset, batch_size=batch_size, shuffle=True,
-            pin_memory=(self.device.type == 'cuda')
+        X_train_tensor = torch.tensor(X_train, dtype=torch.float32)
+        y_train_tensor = torch.tensor(y_train, dtype=torch.float32)
+        
+        train_dataset = torch.utils.data.TensorDataset(X_train_tensor, y_train_tensor)
+        train_dataloader = torch.utils.data.DataLoader(
+            train_dataset, batch_size=batch_size, shuffle=True
         )
-
-        optimizer = torch.optim.Adam(self.parameters(), lr=lr)
-        criterion = nn.MSELoss()
-
-        best_val_loss = float('inf')
-        epoch_bar = tqdm(range(epochs), desc='Обучение', unit='эпоха',
-                        ncols=120, disable=not verbose, position=0)
-
-        for epoch in epoch_bar:
-            self.train()
-            train_loss = 0.0
-
-            for X_batch, y_batch in dataloader:
-                u_batch = X_batch[:, :self.n_var]
-                p_batch = X_batch[:, self.n_var:self.n_var + self.n_param]
-
-                optimizer.zero_grad()
-                pred = self.forward(u_batch, p_batch)
-                loss = criterion(pred, y_batch)
-                loss.backward()
-                optimizer.step()
-
-                train_loss += loss.item()
-
-            # Валидация
-            val_loss = None
-            if val_split > 0 and epoch % val_every == 0:
-                self.eval()
-                with torch.no_grad():
-                    X_val_tensor = torch.tensor(X_val, dtype=torch.float32, device=self.device)
-                    y_val_tensor = torch.tensor(y_val, dtype=torch.float32, device=self.device)
-                    u_val = X_val_tensor[:, :self.n_var]
-                    p_val = X_val_tensor[:, self.n_var:self.n_var + self.n_param]
-
-                    val_pred = self.forward(u_val, p_val)
-                    val_loss = criterion(val_pred, y_val_tensor).item()
-
-                    if val_loss < best_val_loss:
-                        best_val_loss = val_loss
-                        self.logger.debug(f'Лучшая валидация: {best_val_loss:.6f}')
-
-            avg_train_loss = train_loss / len(dataloader)
-            postfix = {'loss': f'{avg_train_loss:.6f}'}
-            if val_loss is not None:
-                postfix['val_loss'] = f'{val_loss:.6f}'
-            epoch_bar.set_postfix(postfix)
-
-            if epoch % log_every == 0:
-                self.logger.debug(f"Эпоха {epoch:4d} | {epoch_bar.format_dict['postfix']}")
-
-        epoch_bar.close()
-        self.logger.info(f"Готово. Лучшая валидация: {best_val_loss:.6f}")
+        
+        val_dataloader = None
+        if val_split > 0:
+            X_val_tensor = torch.tensor(X_val, dtype=torch.float32)
+            y_val_tensor = torch.tensor(y_val, dtype=torch.float32)
+            val_dataset = torch.utils.data.TensorDataset(X_val_tensor, y_val_tensor)
+            val_dataloader = torch.utils.data.DataLoader(
+                val_dataset, batch_size=batch_size, shuffle=False
+            )
+        
+        # Настройка callbacks
+        callbacks = [TQDMProgressBar(refresh_rate=1 if verbose else 0)]
+        checkpoint_callback = None
+        if val_split > 0:
+            checkpoint_callback = ModelCheckpoint(
+                monitor='val_loss',
+                mode='min',
+                save_top_k=1,
+                verbose=verbose
+            )
+            callbacks.append(checkpoint_callback)
+        
+        # Настройка логирования
+        log_every_n_steps = log_every if log_every > 0 else 50
+        
+        trainer = pl.Trainer(
+            max_epochs=epochs,
+            callbacks=callbacks,
+            enable_progress_bar=verbose,
+            log_every_n_steps=log_every_n_steps,
+            check_val_every_n_epoch=val_every if val_split > 0 else 1,
+            logger=False  # Используем наш собственный логгер
+        )
+        
+        trainer.fit(self, train_dataloader, val_dataloader)
+        
+        if checkpoint_callback is not None and checkpoint_callback.best_model_score is not None:
+            self.logger_py.info(f"Готово. Лучшая валидация: {checkpoint_callback.best_model_score:.6f}")
+        else:
+            self.logger_py.info("Готово.")
         
     def predict(self, X):
         """Предсказание (возвращает numpy на CPU)"""
@@ -151,11 +166,13 @@ class NeuroMap1(nn.Module):
         d = y
         
         if np.any(np.std(d, axis=0) < 1e-8):
-            self.logger.warning("Обнаружены константные приращения (std < 1e-8)")
+            self.logger_py.warning("Обнаружены константные приращения (std < 1e-8)")
         
         def update_stat(buffer, data, is_std=False):
-            tensor = torch.tensor(np.mean(data, axis=0, keepdims=True) if not is_std else np.std(data, axis=0, keepdims=True), 
-                                 dtype=torch.float32, device=self.device)
+            tensor = torch.tensor(
+                np.mean(data, axis=0, keepdims=True) if not is_std else np.std(data, axis=0, keepdims=True), 
+                dtype=torch.float32
+            )
             buffer.copy_(tensor)
             if is_std:
                 buffer.clamp_(min=1e-6)
@@ -166,3 +183,55 @@ class NeuroMap1(nn.Module):
         update_stat(self.sp, p, is_std=True)
         update_stat(self.mu_d, d)
         update_stat(self.sd, d, is_std=True)
+    
+    def save(self, path):
+        """
+        Сохранение модели в файл (совместимость с предыдущим API)
+        
+        Args:
+            path: путь к файлу для сохранения (str или Path)
+        """
+        path = Path(path)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        
+        # Сохраняем checkpoint в формате Lightning
+        # Преобразуем hparams в словарь, если это Namespace
+        hparams = self.hparams
+        if hasattr(hparams, '__dict__'):
+            hparams = hparams.__dict__
+        elif not isinstance(hparams, dict):
+            hparams = dict(hparams)
+        
+        checkpoint = {
+            'state_dict': self.state_dict(),
+            'hyper_parameters': hparams
+        }
+        torch.save(checkpoint, str(path))
+        self.logger_py.info(f"Модель сохранена в {path}")
+    
+    @classmethod
+    def load(cls, path, device=None):
+        """
+        Загрузка модели из файла
+        
+        Args:
+            path: путь к файлу с сохраненной моделью (str или Path)
+            device: устройство для загрузки модели (если None, определяется автоматически)
+        
+        Returns:
+            NeuroMap1: загруженная модель
+        """
+        path = Path(path)
+        if not path.exists():
+            raise FileNotFoundError(f"Файл модели не найден: {path}")
+        
+        # Используем встроенный метод Lightning для загрузки
+        model = cls.load_from_checkpoint(str(path))
+        
+        if device is not None:
+            model.to(device)
+        
+        logger = get_logger(__name__)
+        logger.info(f"Модель загружена из {path}")
+        
+        return model
