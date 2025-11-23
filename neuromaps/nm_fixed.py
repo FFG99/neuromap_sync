@@ -134,16 +134,29 @@ class NeuroMapFixed(pl.LightningModule):
     
     def fit(self, X, y, epochs=1000, lr=1e-3, batch_size=64, val_split=0.1,
             val_every=10, log_every=100, verbose=True, num_workers=79, checkpoint_dir=None,
-            history_path=None):
+            history_path=None, ckpt_path=None):
         """
         Обучение модели (совместимость с предыдущим API)
         
         Args:
             history_path: путь для сохранения истории обучения (JSON файл). 
                           Если None, история не сохраняется.
+            ckpt_path: путь к чекпоинту для продолжения обучения. Если None и указан checkpoint_dir,
+                      будет автоматически найден последний чекпоинт.
         """
         self.lr = lr
         self._compute_statistics(X, y)
+        
+        # Автоматический поиск последнего чекпоинта
+        if ckpt_path is None and checkpoint_dir is not None:
+            checkpoint_dir_path = Path(checkpoint_dir)
+            if checkpoint_dir_path.exists():
+                # Ищем чекпоинты с паттерном epoch=*.ckpt
+                checkpoint_files = list(checkpoint_dir_path.glob("epoch=*.ckpt"))
+                if checkpoint_files:
+                    # Сортируем по времени модификации и берем последний
+                    ckpt_path = str(max(checkpoint_files, key=lambda p: p.stat().st_mtime))
+                    self.logger_py.info(f"Найден чекпоинт для продолжения: {ckpt_path}")
 
         N = len(X)
         n_train = int(N * (1 - val_split))
@@ -195,7 +208,7 @@ class NeuroMapFixed(pl.LightningModule):
             logger=False
         )
         
-        trainer.fit(self, train_dataloader, val_dataloader)
+        trainer.fit(self, train_dataloader, val_dataloader, ckpt_path=ckpt_path)
         
         if history_path is not None:
             history = history_callback.get_history()
