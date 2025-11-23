@@ -15,10 +15,10 @@ X, y = generate_pairs_dataset(
 )
 
 model = NeuroMapOriginal(n_var=2, n_param=2, hidden_size=128, dt=0.01)
-model.fit(X, y, epochs=1000, lr=1e-3, batch_size=256, val_split=0.1, 
-          checkpoint_dir="experiments/single_vdp_nm_1/checkpoints",
-          history_path="experiments/single_vdp_nm_1/checkpoints/history.json")
+model.fit(X, y, epochs=100, lr=1e-3, batch_size=256, val_split=0.2, 
+          checkpoint_dir="experiments/normalization/checkpoints/original",
+          history_path="experiments/normalization/checkpoints/original/history.json")
 
-model_path = "experiments/single_vdp_nm_1/checkpoints/model_original.ckpt"
+model_path = "experiments/normalization/checkpoints/original/model.ckpt"
 model.save(model_path)
 print(f"Модель сохранена в {model_path}")

@@ -7,6 +7,7 @@ import pytorch_lightning as pl
 from pytorch_lightning.callbacks import ModelCheckpoint, TQDMProgressBar
 from pytorch_lightning.callbacks import Callback
 import json
+from datetime import datetime
 from utils.logger import get_logger
 
 
@@ -257,40 +258,39 @@ class NeuroMapOriginal(pl.LightningModule):
         update_stat(self.sp, p, is_std=True)
         # mu_d и sd ОТСУТСТВУЮТ
     
-    def save(self, path):
-        """Сохранение модели"""
-        path = Path(path)
-        path.parent.mkdir(parents=True, exist_ok=True)
-        
-        hparams = self.hparams
-        if hasattr(hparams, '__dict__'):
-            hparams = hparams.__dict__
-        elif not isinstance(hparams, dict):
-            hparams = dict(hparams)
-        
-        checkpoint = {
-            'state_dict': self.state_dict(),
-            'hyper_parameters': hparams
-        }
-        torch.save(checkpoint, str(path))
-        self.logger_py.info(f"Модель сохранена в {path}")
-    
     @classmethod
     def load(cls, path, device=None):
-        """Загрузка модели"""
+        """
+        Универсальная загрузка модели из любого формата checkpoint
+        
+        Args:
+            path: путь к файлу (.ckpt, .pt, .pth)
+            device: 'cpu', 'cuda', или None (автовыбор)
+        
+        Returns:
+            NeuroMap1: загруженная модель
+        
+        Raises:
+            FileNotFoundError: файл не найден
+            ValueError: файл поврежден или некорректен
+        """
         path = Path(path)
         if not path.exists():
-            raise FileNotFoundError(f"Файл модели не найден: {path}")
+            raise FileNotFoundError(f"Файл не найден: {path.absolute()}")
         
-        checkpoint = torch.load(str(path), map_location=device)
+        # Автовыбор device
+        if device is None:
+            device = 'cuda' if torch.cuda.is_available() else 'cpu'
         
+        checkpoint = torch.load(str(path), map_location=device, weights_only=False)
+        
+        # 1. Lightning checkpoint (ModelCheckpoint)
         if 'pytorch-lightning_version' in checkpoint:
-            model = cls.load_from_checkpoint(str(path), map_location=device)
-        else:
+            return cls.load_from_checkpoint(str(path), map_location=device)
+        
+        # 2. Ручное сохранение через model.save()
+        if '_format' in checkpoint and checkpoint['_format'] == 'neuromap_v1.0':
             hparams = checkpoint.get('hyper_parameters', {})
-            if not isinstance(hparams, dict):
-                hparams = dict(hparams)
-            
             required_params = ['n_var', 'n_param', 'hidden_size', 'dt', 'lr']
             missing = [p for p in required_params if p not in hparams]
             if missing:
@@ -299,24 +299,71 @@ class NeuroMapOriginal(pl.LightningModule):
                 )
             
             model = cls(**hparams)
-            model.load_state_dict(checkpoint['state_dict'])
-            
-            if device is not None:
-                model.to(device)
-        
-        logger = get_logger(__name__)
-        logger.info(f"Модель загружена из {path}")
-        
-        history_path = path.parent / 'history.json'
-        if history_path.exists():
             try:
-                with open(history_path, 'r', encoding='utf-8') as f:
-                    model.training_history = json.load(f)
-                logger.info(f"История обучения загружена из {history_path}")
-            except Exception as e:
-                logger.warning(f"Не удалось загрузить историю обучения: {e}")
-                model.training_history = None
-        else:
-            model.training_history = None
+                model.load_state_dict(checkpoint['state_dict'], strict=True)
+            except RuntimeError as e:
+                raise ValueError(
+                    f"Не удалось загрузить state_dict. Возможно, модель была сохранена с другой архитектурой. "
+                    f"Ошибка: {str(e)}"
+                ) from e
+            model.to(device)
+            
+            # Попытка загрузить историю обучения из файла, если она не в checkpoint
+            if not hasattr(model, 'training_history') or model.training_history is None:
+                history_path = path.parent / f"{path.stem}_history.json"
+                if history_path.exists():
+                    try:
+                        with open(history_path, 'r', encoding='utf-8') as f:
+                            model.training_history = json.load(f)
+                    except Exception as e:
+                        model.logger_py.warning(f"Не удалось загрузить историю из {history_path}: {e}")
+            
+            return model
         
-        return model
+        # 3. Legacy или поврежденный файл
+        raise ValueError(
+            f"Файл {path} имеет неподдерживаемый формат. "
+            f"Доступные ключи: {list(checkpoint.keys())[:10]}... "
+            f"Используйте model.save() для сохранения в правильном формате."
+        )
+
+    def save(self, path, save_history=True):
+        """
+        Надежное сохранение модели в универсальном формате
+        
+        Args:
+            path: путь к файлу
+            save_history: сохранять ли историю в отдельный JSON
+        
+        Returns:
+            Path: путь к сохраненному файлу
+        """
+        path = Path(path).with_suffix('.ckpt')
+        path.parent.mkdir(parents=True, exist_ok=True)
+        
+        # Явные гиперпараметры
+        hparams = {
+            'n_var': int(self.n_var),
+            'n_param': int(self.n_param),
+            'hidden_size': int(self.hidden_size),
+            'dt': float(self.dt),
+            'lr': float(self.lr)
+        }
+        
+        checkpoint = {
+            'state_dict': self.state_dict(),
+            'hyper_parameters': hparams,
+            '_format': 'neuromap_v1.0',
+            'torch_version': torch.__version__,
+            'saved_at': datetime.now().isoformat()
+        }
+        
+        torch.save(checkpoint, str(path))
+        
+        # Сохранение истории
+        if save_history and hasattr(self, 'training_history'):
+            history_path = path.parent / f"{path.stem}_history.json"
+            with open(history_path, 'w', encoding='utf-8') as f:
+                json.dump(self.training_history, f, indent=2)
+        
+        return path
