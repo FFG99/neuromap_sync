@@ -74,7 +74,7 @@ class NeuroMap1(pl.LightningModule):
         return torch.optim.Adam(self.parameters(), lr=self.lr)
     
     def fit(self, X, y, epochs=1000, lr=1e-3, batch_size=64, val_split=0.1,
-            val_every=10, log_every=100, verbose=True):
+            val_every=10, log_every=100, verbose=True, num_workers=79, checkpoint_dir=None):
         """Обучение модели (совместимость с предыдущим API)"""
         self.lr = lr
         self._compute_statistics(X, y)
@@ -91,7 +91,7 @@ class NeuroMap1(pl.LightningModule):
         
         train_dataset = torch.utils.data.TensorDataset(X_train_tensor, y_train_tensor)
         train_dataloader = torch.utils.data.DataLoader(
-            train_dataset, batch_size=batch_size, shuffle=True
+            train_dataset, batch_size=batch_size, shuffle=True, num_workers=num_workers
         )
         
         val_dataloader = None
@@ -100,19 +100,22 @@ class NeuroMap1(pl.LightningModule):
             y_val_tensor = torch.tensor(y_val, dtype=torch.float32)
             val_dataset = torch.utils.data.TensorDataset(X_val_tensor, y_val_tensor)
             val_dataloader = torch.utils.data.DataLoader(
-                val_dataset, batch_size=batch_size, shuffle=False
+                val_dataset, batch_size=batch_size, shuffle=False, num_workers=num_workers
             )
         
         # Настройка callbacks
         callbacks = [TQDMProgressBar(refresh_rate=1 if verbose else 0)]
         checkpoint_callback = None
         if val_split > 0:
-            checkpoint_callback = ModelCheckpoint(
-                monitor='val_loss',
-                mode='min',
-                save_top_k=1,
-                verbose=verbose
-            )
+            checkpoint_kwargs = {
+                'monitor': 'val_loss',
+                'mode': 'min',
+                'save_top_k': 1,
+                'verbose': verbose
+            }
+            if checkpoint_dir is not None:
+                checkpoint_kwargs['dirpath'] = checkpoint_dir
+            checkpoint_callback = ModelCheckpoint(**checkpoint_kwargs)
             callbacks.append(checkpoint_callback)
         
         # Настройка логирования
