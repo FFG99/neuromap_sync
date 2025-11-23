@@ -228,11 +228,27 @@ class NeuroMap1(pl.LightningModule):
         if not path.exists():
             raise FileNotFoundError(f"Файл модели не найден: {path}")
         
-        # Используем встроенный метод Lightning для загрузки
-        model = cls.load_from_checkpoint(str(path))
+        # Загружаем чекпоинт
+        checkpoint = torch.load(str(path), map_location=device)
         
-        if device is not None:
-            model.to(device)
+        # Проверяем формат чекпоинта
+        if 'pytorch-lightning_version' in checkpoint:
+            # Полный формат Lightning - используем встроенный метод
+            model = cls.load_from_checkpoint(str(path), map_location=device)
+        else:
+            # Кастомный формат - загружаем вручную
+            hparams = checkpoint.get('hyper_parameters', {})
+            if not isinstance(hparams, dict):
+                hparams = dict(hparams)
+            
+            # Создаем модель с гиперпараметрами
+            model = cls(**hparams)
+            
+            # Загружаем веса
+            model.load_state_dict(checkpoint['state_dict'])
+            
+            if device is not None:
+                model.to(device)
         
         logger = get_logger(__name__)
         logger.info(f"Модель загружена из {path}")
