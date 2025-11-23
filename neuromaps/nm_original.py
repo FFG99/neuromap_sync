@@ -4,17 +4,73 @@ import numpy as np
 from tqdm import tqdm
 from pathlib import Path
 import pytorch_lightning as pl
-from pytorch_lightning.callbacks import ModelCheckpoint
-from pytorch_lightning.callbacks.progress import TQDMProgressBar
-
+from pytorch_lightning.callbacks import ModelCheckpoint, TQDMProgressBar
+from pytorch_lightning.callbacks import Callback
+import json
 from utils.logger import get_logger
 
 
-class NeuroMap1(pl.LightningModule):
+class HistoryCallback(Callback):
+    """Callback для сбора истории обучения"""
+    def __init__(self):
+        super().__init__()
+        self.history = {
+            'train_loss': [],
+            'val_loss': [],
+            'epoch': []
+        }
+        self.last_val_loss = None
+    
+    def on_train_epoch_end(self, trainer, pl_module):
+        """Собираем метрики в конце каждой эпохи обучения"""
+        epoch = trainer.current_epoch
+        
+        metrics = trainer.callback_metrics
+        logged_metrics = trainer.logged_metrics
+        
+        train_loss = None
+        for key in ['train_loss_epoch', 'train_loss']:
+            if key in metrics:
+                train_loss = float(metrics[key].cpu())
+                break
+            elif key in logged_metrics:
+                train_loss = float(logged_metrics[key].cpu())
+                break
+        
+        if train_loss is not None:
+            self.history['train_loss'].append(train_loss)
+        elif len(self.history['train_loss']) > 0:
+            self.history['train_loss'].append(self.history['train_loss'][-1])
+        
+        val_loss = None
+        for key in ['val_loss']:
+            if key in metrics:
+                val_loss = float(metrics[key].cpu())
+                self.last_val_loss = val_loss
+                break
+            elif key in logged_metrics:
+                val_loss = float(logged_metrics[key].cpu())
+                self.last_val_loss = val_loss
+                break
+        
+        if val_loss is not None:
+            self.history['val_loss'].append(val_loss)
+        elif self.last_val_loss is not None:
+            self.history['val_loss'].append(self.last_val_loss)
+        
+        self.history['epoch'].append(epoch)
+    
+    def get_history(self):
+        """Возвращает историю обучения"""
+        return self.history.copy()
+
+
+class NeuroMapOriginal(pl.LightningModule):
+    """Модель С ОШИБКОЙ из статьи: денормализация по u вместо d"""
     
     def __init__(self, n_var, n_param, hidden_size=50, dt=0.01, lr=1e-3):
         super().__init__()
-        self.save_hyperparameters()
+        self.save_hyperparameters('n_var', 'n_param', 'hidden_size', 'dt', 'lr')
         
         self.n_var = n_var
         self.n_param = n_param
@@ -24,12 +80,12 @@ class NeuroMap1(pl.LightningModule):
         
         self.logger_py = get_logger(__name__)
         
+        # === Только статистика для входов, НЕТ статистики для приращений ===
         self.register_buffer('mu_u', torch.zeros(1, n_var))
         self.register_buffer('su', torch.ones(1, n_var))
         self.register_buffer('mu_p', torch.zeros(1, n_param))
         self.register_buffer('sp', torch.ones(1, n_param))
-        self.register_buffer('mu_d', torch.zeros(1, n_var))
-        self.register_buffer('sd', torch.ones(1, n_var))
+        # mu_d и sd УДАЛЕНЫ - их нет в статье
         
         self.hidden = nn.Linear(n_var + n_param, hidden_size)
         self.activation = nn.Tanh()
@@ -38,6 +94,7 @@ class NeuroMap1(pl.LightningModule):
         self.criterion = nn.MSELoss()
     
     def forward(self, u, p):
+        """Прямой проход С ОШИБКОЙ"""
         u_norm = (u - self.mu_u) / self.su
         p_norm = (p - self.mu_p) / self.sp
         
@@ -45,7 +102,8 @@ class NeuroMap1(pl.LightningModule):
         h = self.activation(self.hidden(z))
         g = self.output(h)
         
-        d = self.dt * (g * self.sd + self.mu_d)
+        # === Используем статистику u для денормализации d ===
+        d = self.dt * (g * self.su + self.mu_u)
         return d
     
     def training_step(self, batch, batch_idx):
@@ -74,8 +132,11 @@ class NeuroMap1(pl.LightningModule):
         return torch.optim.Adam(self.parameters(), lr=self.lr)
     
     def fit(self, X, y, epochs=1000, lr=1e-3, batch_size=64, val_split=0.1,
-            val_every=10, log_every=100, verbose=True, num_workers=79, checkpoint_dir=None):
-        """Обучение модели (совместимость с предыдущим API)"""
+            val_every=10, log_every=100, verbose=True, num_workers=0, 
+            checkpoint_dir=None, history_path=None):
+        """
+        Обучение модели (совместимость с предыдущим API)
+        """
         self.lr = lr
         self._compute_statistics(X, y)
 
@@ -103,8 +164,8 @@ class NeuroMap1(pl.LightningModule):
                 val_dataset, batch_size=batch_size, shuffle=False, num_workers=num_workers
             )
         
-        # Настройка callbacks
-        callbacks = [TQDMProgressBar(refresh_rate=1 if verbose else 0)]
+        history_callback = HistoryCallback()
+        callbacks = [history_callback, TQDMProgressBar(refresh_rate=1 if verbose else 0)]
         checkpoint_callback = None
         if val_split > 0:
             checkpoint_kwargs = {
@@ -118,7 +179,6 @@ class NeuroMap1(pl.LightningModule):
             checkpoint_callback = ModelCheckpoint(**checkpoint_kwargs)
             callbacks.append(checkpoint_callback)
         
-        # Настройка логирования
         log_every_n_steps = log_every if log_every > 0 else 50
         
         trainer = pl.Trainer(
@@ -127,10 +187,20 @@ class NeuroMap1(pl.LightningModule):
             enable_progress_bar=verbose,
             log_every_n_steps=log_every_n_steps,
             check_val_every_n_epoch=val_every if val_split > 0 else 1,
-            logger=False  # Используем наш собственный логгер
+            logger=False
         )
         
         trainer.fit(self, train_dataloader, val_dataloader)
+        
+        if history_path is not None:
+            history = history_callback.get_history()
+            history_path = Path(history_path)
+            history_path.parent.mkdir(parents=True, exist_ok=True)
+            with open(history_path, 'w', encoding='utf-8') as f:
+                json.dump(history, f, indent=2, ensure_ascii=False)
+            self.logger_py.info(f"История обучения сохранена в {history_path}")
+        
+        self.training_history = history_callback.get_history()
         
         if checkpoint_callback is not None and checkpoint_callback.best_model_score is not None:
             self.logger_py.info(f"Готово. Лучшая валидация: {checkpoint_callback.best_model_score:.6f}")
@@ -163,7 +233,7 @@ class NeuroMap1(pl.LightningModule):
         return np.concatenate(trajectory, axis=0)
     
     def _compute_statistics(self, X, y):
-        """Вычисление статистики с валидацией"""
+        """Вычисление статистики С ОШИБКОЙ (не учитывает масштаб y)"""
         u = X[:, :self.n_var]
         p = X[:, self.n_var:self.n_var+self.n_param]
         d = y
@@ -180,25 +250,18 @@ class NeuroMap1(pl.LightningModule):
             if is_std:
                 buffer.clamp_(min=1e-6)
         
+        # === Статистика для d НЕ вычисляется ===
         update_stat(self.mu_u, u)
         update_stat(self.su, u, is_std=True)
         update_stat(self.mu_p, p)
         update_stat(self.sp, p, is_std=True)
-        update_stat(self.mu_d, d)
-        update_stat(self.sd, d, is_std=True)
+        # mu_d и sd ОТСУТСТВУЮТ
     
     def save(self, path):
-        """
-        Сохранение модели в файл (совместимость с предыдущим API)
-        
-        Args:
-            path: путь к файлу для сохранения (str или Path)
-        """
+        """Сохранение модели"""
         path = Path(path)
         path.parent.mkdir(parents=True, exist_ok=True)
         
-        # Сохраняем checkpoint в формате Lightning
-        # Преобразуем hparams в словарь, если это Namespace
         hparams = self.hparams
         if hasattr(hparams, '__dict__'):
             hparams = hparams.__dict__
@@ -214,37 +277,28 @@ class NeuroMap1(pl.LightningModule):
     
     @classmethod
     def load(cls, path, device=None):
-        """
-        Загрузка модели из файла
-        
-        Args:
-            path: путь к файлу с сохраненной моделью (str или Path)
-            device: устройство для загрузки модели (если None, определяется автоматически)
-        
-        Returns:
-            NeuroMap1: загруженная модель
-        """
+        """Загрузка модели"""
         path = Path(path)
         if not path.exists():
             raise FileNotFoundError(f"Файл модели не найден: {path}")
         
-        # Загружаем чекпоинт
         checkpoint = torch.load(str(path), map_location=device)
         
-        # Проверяем формат чекпоинта
         if 'pytorch-lightning_version' in checkpoint:
-            # Полный формат Lightning - используем встроенный метод
             model = cls.load_from_checkpoint(str(path), map_location=device)
         else:
-            # Кастомный формат - загружаем вручную
             hparams = checkpoint.get('hyper_parameters', {})
             if not isinstance(hparams, dict):
                 hparams = dict(hparams)
             
-            # Создаем модель с гиперпараметрами
-            model = cls(**hparams)
+            required_params = ['n_var', 'n_param', 'hidden_size', 'dt', 'lr']
+            missing = [p for p in required_params if p not in hparams]
+            if missing:
+                raise ValueError(
+                    f"Отсутствуют обязательные гиперпараметры: {missing}"
+                )
             
-            # Загружаем веса
+            model = cls(**hparams)
             model.load_state_dict(checkpoint['state_dict'])
             
             if device is not None:
@@ -252,5 +306,17 @@ class NeuroMap1(pl.LightningModule):
         
         logger = get_logger(__name__)
         logger.info(f"Модель загружена из {path}")
+        
+        history_path = path.parent / 'history.json'
+        if history_path.exists():
+            try:
+                with open(history_path, 'r', encoding='utf-8') as f:
+                    model.training_history = json.load(f)
+                logger.info(f"История обучения загружена из {history_path}")
+            except Exception as e:
+                logger.warning(f"Не удалось загрузить историю обучения: {e}")
+                model.training_history = None
+        else:
+            model.training_history = None
         
         return model

@@ -1,3 +1,4 @@
-from .nm1 import NeuroMap1
+from .nm_original import NeuroMapOriginal
+from .nm_fixed import NeuroMapFixed
 
-__all__ = ['NeuroMap1']
+__all__ = ['NeuroMapOriginal', 'NeuroMapFixed']

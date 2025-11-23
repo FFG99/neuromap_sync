@@ -1,5 +1,7 @@
 import numpy as np
 from matplotlib import pyplot as plt
+from pathlib import Path
+import json
 from .logger import get_logger
 
 logger = get_logger(__name__)
@@ -72,3 +74,54 @@ def plot_heatmap(x, y, Z):
 
     plt.tight_layout()
     plt.show()
+
+
+def plot_training_history(history, title=None, figsize=(10, 6), log_scale=False):
+    """
+    Построение графиков истории обучения
+    
+    Args:
+        history: словарь с историей обучения (dict) или путь к JSON файлу (str/Path)
+                 Должен содержать ключи: 'train_loss', 'val_loss', 'epoch'
+        title: заголовок графика
+        figsize: размер фигуры
+        log_scale: использовать ли логарифмическую шкалу для оси Y
+    """
+    if isinstance(history, (str, Path)):
+        history_path = Path(history)
+        if not history_path.exists():
+            raise FileNotFoundError(f"Файл истории не найден: {history_path}")
+        with open(history_path, 'r', encoding='utf-8') as f:
+            history = json.load(f)
+    
+    if not isinstance(history, dict):
+        raise ValueError("history должен быть словарем или путем к JSON файлу")
+    
+    epochs = history.get('epoch', [])
+    train_loss = history.get('train_loss', [])
+    val_loss = history.get('val_loss', [])
+    
+    if not epochs:
+        raise ValueError("История обучения пуста")
+    
+    fig, ax = plt.subplots(figsize=figsize)
+    
+    if train_loss:
+        ax.plot(epochs, train_loss, label='Train Loss', linewidth=2, alpha=0.8)
+    
+    if val_loss:
+        ax.plot(epochs, val_loss, label='Val Loss', linewidth=2, alpha=0.8)
+    
+    ax.set_xlabel('Эпоха', fontsize=12)
+    ax.set_ylabel('Loss', fontsize=12)
+    ax.set_title(title or 'История обучения', fontsize=14)
+    ax.legend(fontsize=11)
+    ax.grid(True, alpha=0.3)
+    
+    if log_scale:
+        ax.set_yscale('log')
+    
+    plt.tight_layout()
+    plt.show()
+    
+    return fig, ax
