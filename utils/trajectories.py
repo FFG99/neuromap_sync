@@ -95,39 +95,76 @@ def grid_of_amplitude(evolution_operator,
                       dt,
                       n_transient,
                       n_attractor,
-                      secant_plane,
+                      secant_plane=None,
                       accuracy: float = 0.0001,
                       max_steps: int = 100_000_000,
                       fixed_point_threshold: float = 1e-12,
-                      n_jobs: int = -1) -> np.ndarray:
+                      n_jobs: int = -1,
+                      *,
+                      model=None) -> np.ndarray:
     """
     Параллельно строит 2-D поле амплитуд аттракторов.
     state = [x_grid, y_grid] – список из двух np.ndarray (линейки).
     Возвращает Z[i, j] = ‖range(attractor([x[j], y[i]]))‖
+    
+    Args:
+        evolution_operator: функция эволюции системы (используется если model=None)
+        state: начальное состояние системы
+        params: список из двух сеток параметров [x_grid, y_grid]
+        dt: шаг времени
+        n_transient: количество пересечений переходного процесса (для ODE) или шагов (для model)
+        n_attractor: количество пересечений аттрактора (для ODE) или шагов (для model)
+        secant_plane: функция секущей плоскости (используется только для ODE)
+        accuracy: точность для обнаружения замкнутой орбиты (только для ODE)
+        max_steps: максимальное количество шагов (только для ODE)
+        fixed_point_threshold: порог для обнаружения неподвижной точки (только для ODE)
+        n_jobs: количество параллельных процессов
+        model: модель NeuroMapFixed или NeuroMapOriginal (если указана, используется вместо evolution_operator)
     """
     x_grid, y_grid = params
 
     Z = np.empty((len(y_grid), len(x_grid)))
 
-    def worker(i_y: int) -> tuple[int, np.ndarray]:
-        y_val = y_grid[i_y]
-        row = np.array([
-            np.linalg.norm(np.ptp(get_attractor_trajectory(
-                evolution_operator,
-                state,
-                [xi, y_val],
-                dt,
-                n_transient,
-                n_attractor,
-                secant_plane,
-                accuracy,
-                max_steps,
-                fixed_point_threshold), axis=0))
-            for xi in x_grid
-        ])
-        return i_y, row
+    if model is not None:
+        # Режим нейромэпа
+        def worker(i_y: int) -> tuple[int, np.ndarray]:
+            y_val = y_grid[i_y]
+            row = np.array([
+                np.linalg.norm(np.ptp(
+                    model.simulate(u0=state, p=[xi, y_val], n_steps=n_transient + n_attractor,
+                        verbose=False)[n_transient:],
+                    axis=0))
+                for xi in x_grid
+            ])
+            return i_y, row
 
-    with tqdm(total=len(y_grid), desc="Вычисление сетки (по строкам)") as pbar:
+        desc = "Вычисление сетки Neuromap (по строкам)"
+    else:
+        # Режим ODE
+        if secant_plane is None:
+            raise ValueError("secant_plane должен быть указан при использовании evolution_operator")
+        
+        def worker(i_y: int) -> tuple[int, np.ndarray]:
+            y_val = y_grid[i_y]
+            row = np.array([
+                np.linalg.norm(np.ptp(get_attractor_trajectory(
+                    evolution_operator,
+                    state,
+                    [xi, y_val],
+                    dt,
+                    n_transient,
+                    n_attractor,
+                    secant_plane,
+                    accuracy,
+                    max_steps,
+                    fixed_point_threshold), axis=0))
+                for xi in x_grid
+            ])
+            return i_y, row
+
+        desc = "Вычисление сетки (по строкам)"
+
+    with tqdm(total=len(y_grid), desc=desc) as pbar:
         for i_y, row in Parallel(n_jobs=n_jobs, backend='loky')(
                 delayed(worker)(i) for i in range(len(y_grid))):
             Z[i_y] = row

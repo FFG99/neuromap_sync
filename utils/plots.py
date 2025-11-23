@@ -1,7 +1,5 @@
 import numpy as np
 from matplotlib import pyplot as plt
-from pathlib import Path
-import json
 from .logger import get_logger
 
 logger = get_logger(__name__)
@@ -61,7 +59,62 @@ def plot_trajectory(traj,
         case _:
             raise ValueError(f"Траектория размерности {dimension} не поддерживается")
 
-def plot_heatmap(x, y, Z):
+def plot_compare(traj_ode, traj_nm, caption=None):
+    """
+    Сравнение двух 2D траекторий рядом друг с другом
+    
+    Args:
+        traj_ode: траектория ODE (Original)
+        traj_nm: траектория Neuromap
+        caption: опциональный общий заголовок
+    """
+    if len(traj_ode) == 0 or len(traj_nm) == 0:
+        raise ValueError("Траектории не могут быть пустыми")
+    
+    dim_ode = len(traj_ode[0])
+    dim_nm = len(traj_nm[0])
+    
+    if dim_ode != 2 or dim_nm != 2:
+        raise ValueError(f"plot_compare поддерживает только 2D траектории. Получены размерности: {dim_ode} и {dim_nm}")
+    
+    xs_ode = [x for (x, y) in traj_ode]
+    ys_ode = [y for (x, y) in traj_ode]
+    
+    xs_nm = [x for (x, y) in traj_nm]
+    ys_nm = [y for (x, y) in traj_nm]
+    
+    # Вычисляем общие пределы для обеих траекторий
+    x_min = min(min(xs_ode), min(xs_nm))
+    x_max = max(max(xs_ode), max(xs_nm))
+    y_min = min(min(ys_ode), min(ys_nm))
+    y_max = max(max(ys_ode), max(ys_nm))
+    
+    fig, axs = plt.subplots(1, 2, figsize=(16, 7))
+    
+    axs[0].scatter(xs_ode, ys_ode, s=0.1)
+    axs[0].set_xlabel(r'$x$')
+    axs[0].set_ylabel(r'$\dot{x}$')
+    axs[0].set_title('Original')
+    axs[0].grid(True)
+    axs[0].set_xlim(x_min, x_max)
+    axs[0].set_ylim(y_min, y_max)
+    
+    axs[1].scatter(xs_nm, ys_nm, s=0.1)
+    axs[1].set_xlabel(r'$x$')
+    axs[1].set_ylabel(r'$\dot{x}$')
+    axs[1].set_title('Neuromap')
+    axs[1].grid(True)
+    axs[1].set_xlim(x_min, x_max)
+    axs[1].set_ylim(y_min, y_max)
+    
+    if caption:
+        fig.suptitle(caption, fontsize=14)
+    
+    plt.tight_layout()
+    plt.show()
+
+
+def plot_heatmap(x, y, Z, *, x_label='x', y_label='y'):
     X, Y = np.meshgrid(x, y)
 
     fig, ax = plt.subplots(figsize=(10, 8))
@@ -69,59 +122,48 @@ def plot_heatmap(x, y, Z):
 
     cbar = fig.colorbar(cs, ax=ax)
 
-    ax.set_xlabel("x")
-    ax.set_ylabel("y")
+    ax.set_xlabel(x_label)
+    ax.set_ylabel(y_label)
 
     plt.tight_layout()
     plt.show()
 
 
-def plot_training_history(history, title=None, figsize=(10, 6), log_scale=False):
+def plot_compare_heatmaps(x, y, Z_ode, Z_nm, caption=None, *, x_label='x', y_label='y', cmap='plasma'):
     """
-    Построение графиков истории обучения
+    Сравнение двух карт амплитуд рядом друг с другом с одним общим колорбаром
     
     Args:
-        history: словарь с историей обучения (dict) или путь к JSON файлу (str/Path)
-                 Должен содержать ключи: 'train_loss', 'val_loss', 'epoch'
-        title: заголовок графика
-        figsize: размер фигуры
-        log_scale: использовать ли логарифмическую шкалу для оси Y
+        x: сетка по оси x
+        y: сетка по оси y
+        Z_ode: карта амплитуд для ODE (Original)
+        Z_nm: карта амплитуд для Neuromap
+        caption: опциональный общий заголовок
+        x_label: подпись оси x
+        y_label: подпись оси y
+        cmap: цветовая карта
     """
-    if isinstance(history, (str, Path)):
-        history_path = Path(history)
-        if not history_path.exists():
-            raise FileNotFoundError(f"Файл истории не найден: {history_path}")
-        with open(history_path, 'r', encoding='utf-8') as f:
-            history = json.load(f)
+    X, Y = np.meshgrid(x, y)
     
-    if not isinstance(history, dict):
-        raise ValueError("history должен быть словарем или путем к JSON файлу")
+    vmin = min(np.nanmin(Z_ode), np.nanmin(Z_nm))
+    vmax = max(np.nanmax(Z_ode), np.nanmax(Z_nm))
     
-    epochs = history.get('epoch', [])
-    train_loss = history.get('train_loss', [])
-    val_loss = history.get('val_loss', [])
+    fig, axs = plt.subplots(1, 2, figsize=(16, 7))
     
-    if not epochs:
-        raise ValueError("История обучения пуста")
+    cs1 = axs[0].contourf(X, Y, Z_ode, levels=50, cmap=cmap, vmin=vmin, vmax=vmax)
+    axs[0].set_xlabel(x_label)
+    axs[0].set_ylabel(y_label)
+    axs[0].set_title('Original')
     
-    fig, ax = plt.subplots(figsize=figsize)
-    
-    if train_loss:
-        ax.plot(epochs, train_loss, label='Train Loss', linewidth=2, alpha=0.8)
-    
-    if val_loss:
-        ax.plot(epochs, val_loss, label='Val Loss', linewidth=2, alpha=0.8)
-    
-    ax.set_xlabel('Эпоха', fontsize=12)
-    ax.set_ylabel('Loss', fontsize=12)
-    ax.set_title(title or 'История обучения', fontsize=14)
-    ax.legend(fontsize=11)
-    ax.grid(True, alpha=0.3)
-    
-    if log_scale:
-        ax.set_yscale('log')
+    cs2 = axs[1].contourf(X, Y, Z_nm, levels=50, cmap=cmap, vmin=vmin, vmax=vmax)
+    axs[1].set_xlabel(x_label)
+    axs[1].set_ylabel(y_label)
+    axs[1].set_title('Neuromap')
     
     plt.tight_layout()
-    plt.show()
+    cbar = fig.colorbar(cs2, ax=axs, location='right', pad=0.02, shrink=0.8)
     
-    return fig, ax
+    if caption:
+        fig.suptitle(caption, fontsize=14)
+    
+    plt.show()

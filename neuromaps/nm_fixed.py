@@ -234,7 +234,7 @@ class NeuroMapFixed(pl.LightningModule):
             p = X_tensor[:, self.n_var:self.n_var+self.n_param]
             return self.forward(u, p).cpu().numpy()
     
-    def simulate(self, u0, p, n_steps):
+    def simulate(self, u0, p, n_steps, verbose=True):
         """Интегрирование ОДУ с прогресс-баром"""
         u0 = np.atleast_2d(u0)
         p  = np.atleast_2d(p)
@@ -242,7 +242,13 @@ class NeuroMapFixed(pl.LightningModule):
         trajectory = [u0.copy()]
         u_current = u0.copy()
 
-        for _ in tqdm(range(n_steps), desc='Симуляция', unit='шаг', ncols=100):
+        iterator = range(n_steps)
+        if verbose:
+            iterator = tqdm(iterator, desc='Симуляция', unit='шаг', ncols=100, disable=False)
+        else:
+            iterator = tqdm(iterator, desc='Симуляция', unit='шаг', ncols=100, disable=True)
+
+        for _ in iterator:
             X_step = np.concatenate([u_current, p], axis=1)
             d = self.predict(X_step)
             u_current = u_current + d
@@ -384,3 +390,55 @@ class NeuroMapFixed(pl.LightningModule):
                 json.dump(self.training_history, f, indent=2)
         
         return path
+
+    def compute_fixed_point_multipliers(self, u_star, p):
+        """
+        Вычисление мультипликаторов неподвижной точки по методике из статьи
+        """
+        self.eval()
+        
+        u_star_tensor = torch.tensor(u_star, dtype=torch.float32, device=self.device)
+        p_tensor = torch.tensor(p, dtype=torch.float32, device=self.device)
+        
+        if u_star_tensor.dim() == 1:
+            u_star_tensor = u_star_tensor.unsqueeze(0)
+        if p_tensor.dim() == 1:
+            p_tensor = p_tensor.unsqueeze(0)
+        
+        batch_size = u_star_tensor.shape[0]
+        
+        u_norm = (u_star_tensor - self.mu_u) / self.su
+        p_norm = (p_tensor - self.mu_p) / self.sp
+        
+        z = torch.cat([u_norm, p_norm], dim=1)
+        
+        h_linear = self.hidden(z)
+        h_n = self.activation(h_linear)
+        
+        h_derivative = 1 - h_n**2
+        
+        W_hidden = self.hidden.weight  # [hidden_size, n_var + n_param]
+        W_u = W_hidden[:, :self.n_var]  # [hidden_size, n_var]
+        W_output = self.output.weight  # [n_var, hidden_size]
+        
+        A0 = W_u.T / self.su.T
+        
+        A1 = W_output.T * self.sd * self.dt  # [hidden_size, n_var]
+        
+        I = torch.eye(self.n_var, device=self.device)
+        
+        multipliers = []
+        
+        for i in range(batch_size):
+            # Диагональная матрица H_n для i-го элемента батча
+            H_n_i = torch.diag(h_derivative[i])  # [hidden_size, hidden_size]
+            
+            J_n = I + A0 @ H_n_i @ A1  # [n_var, n_var]
+            
+            eigenvalues = torch.linalg.eigvals(J_n)
+            multipliers.append(eigenvalues.cpu().detach().numpy())
+        
+        if batch_size == 1:
+            return multipliers[0]
+        return multipliers
+
