@@ -54,6 +54,9 @@ def plot_trajectory(traj,
                 axs[1].xlabel(variables_names[2])
                 axs[1].ylabel(variables_names[3])
 
+            if title:
+                fig.suptitle(title)
+
             plt.tight_layout()
             plt.show()
         case _:
