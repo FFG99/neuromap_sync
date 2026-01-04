@@ -79,7 +79,6 @@ def get_attractor_trajectory(evolution_operator, right_part,
 
         if S_prev < 0 and S_curr >= 0:
 
-            logger.debug(f'S_system={S_system}, state={state}, params={params}, -S_curr={-S_curr}')
             sect_point = rk4_step_vectorized_params(S_system, state, params, -S_curr)
 
             if first_point is None:

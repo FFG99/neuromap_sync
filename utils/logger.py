@@ -57,7 +57,7 @@ def get_logger(name: str = None) -> logging.Logger:
     """
     root_logger = logging.getLogger('neuromap_sync')
     if not root_logger.handlers:
-        current_level = root_logger.level if root_logger.level != logging.NOTSET else logging.DEBUG
+        current_level = root_logger.level if root_logger.level != logging.NOTSET else logging.INFO
         setup_logger(level=current_level)
     
     if name is None:
