@@ -18,24 +18,29 @@ def setup_logger(name: str = "neuromap_sync", level: int = logging.INFO) -> logg
     """
     logger = logging.getLogger(name)
     
-    # Если логгер уже настроен, возвращаем его
-    if logger.handlers:
-        return logger
-    
     logger.setLevel(level)
     
-    # Форматтер для логов
+    root_logger = logging.getLogger()
+    if root_logger.level > level:
+        root_logger.setLevel(level)
+    
+    if logger.handlers:
+        for handler in logger.handlers:
+            handler.setLevel(level)
+        return logger
+    
     formatter = logging.Formatter(
         '%(asctime)s - %(name)s - %(levelname)s - %(funcName)s:%(lineno)d - %(message)s',
         datefmt='%Y-%m-%d %H:%M:%S'
     )
     
-    # Обработчик для консоли
     console_handler = logging.StreamHandler(sys.stdout)
     console_handler.setLevel(level)
     console_handler.setFormatter(formatter)
     
     logger.addHandler(console_handler)
+    
+    logger.propagate = False
     
     return logger
 
@@ -50,15 +55,19 @@ def get_logger(name: str = None) -> logging.Logger:
     Returns:
         Логгер
     """
-    # Убеждаемся, что корневой логгер настроен
     root_logger = logging.getLogger('neuromap_sync')
     if not root_logger.handlers:
-        setup_logger()
+        current_level = root_logger.level if root_logger.level != logging.NOTSET else logging.DEBUG
+        setup_logger(level=current_level)
     
     if name is None:
         import inspect
         frame = inspect.currentframe().f_back
         name = frame.f_globals.get('__name__', 'neuromap_sync')
     
-    return logging.getLogger('neuromap_sync').getChild(name.split('.')[-1])
+    child_logger = logging.getLogger('neuromap_sync').getChild(name.split('.')[-1])
+    child_logger.propagate = True
+    child_logger.setLevel(logging.NOTSET)
+    
+    return child_logger
 
