@@ -4,6 +4,8 @@ from typing import List
 from joblib import Parallel, delayed
 from tqdm import tqdm
 
+from utils.rk4 import rk4_step_vectorized_params
+
 logger = get_logger(__name__)
 
 
@@ -28,19 +30,21 @@ def pass_transient_process(evolution_operator, state, params, dt,
         if np.linalg.norm(current_state - previous_state) < fixed_point_threshold:
             return current_state
 
-        S_prev = secant_plane(previous_state)
-        S_curr = secant_plane(current_state)
+        S_prev = secant_plane(previous_state, params)
+        S_curr = secant_plane(current_state, params)
         
         if S_prev < 0 and S_curr >= 0:
             number_of_intersections += 1
-            logger.debug(f"Пересечение #{number_of_intersections} на шаге {step_count}")
+            # logger.debug(f"Пересечение #{number_of_intersections} на шаге {step_count}")
     
     logger.debug(f"Переходный процесс завершен: intersections={number_of_intersections}, steps={step_count}")
     return current_state
 
 
-def get_attractor_trajectory(evolution_operator, state, params, dt, 
-                             n_transient, n_attractor, secant_plane,
+def get_attractor_trajectory(evolution_operator, right_part,
+                             state, params, dt, 
+                             n_transient, n_attractor, 
+                             secant_plane, secant_plane_derivatives,
                              accuracy=1e-4, max_steps=100_000_000,
                              fixed_point_threshold=1e-12):
     
@@ -63,21 +67,27 @@ def get_attractor_trajectory(evolution_operator, state, params, dt,
         if np.linalg.norm(state - previous_state) < fixed_point_threshold:
             logger.debug(f"Обнаружена неподвижная точка (threshold={fixed_point_threshold}). Возврат точки.")
             return [state]
+
+        def S_system(state, params):
+                H_val: float = sum(secant_plane_derivatives(state, params) * right_part(state, params))
+                dX_dS: np.array(dtype=float) = right_part(state, params) / H_val
+                return dX_dS
         
         attractor_trajectory.append(state)
-        S_prev = secant_plane(previous_state)
-        S_curr = secant_plane(state)
+        S_prev = secant_plane(previous_state, params)
+        S_curr = secant_plane(state, params)
 
         if S_prev < 0 and S_curr >= 0:
-            dS = -S_curr
-            sect_point = evolution_operator(state, params, dS)
+
+            logger.debug(f'S_system={S_system}, state={state}, params={params}, -S_curr={-S_curr}')
+            sect_point = rk4_step_vectorized_params(S_system, state, params, -S_curr)
 
             if first_point is None:
                 first_point = sect_point
                 logger.debug(f"Первая точка пересечения: {first_point}")
             else:
                 distance = np.linalg.norm(sect_point - first_point)
-                logger.debug(f"Расстояние до первой точки: {distance}")
+                logger.debug(f'X={sect_point}, S(X)={secant_plane(sect_point, params)}, d(p1, X)={distance}')
                 if distance < accuracy:
                     logger.debug(f"Замкнутая орбита обнаружена (accuracy={accuracy}). Траектория содержит {len(attractor_trajectory)} точек.")
                     return attractor_trajectory
