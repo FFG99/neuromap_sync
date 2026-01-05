@@ -2,28 +2,27 @@ import numpy as np
 from tqdm import tqdm
 
 class CoupledOscillators:
-    def __init__(self, model1, model2, dt=0.01):
+    def __init__(self, model1, model2):
+        """
+        Инициализация связанных осцилляторов.
+        
+        Args:
+            model1: первый нейромэп (NeuroMapFixed или NeuroMapOriginal)
+            model2: второй нейромэп (NeuroMapFixed или NeuroMapOriginal)
+        """
+        if not self._is_neuromap(model1):
+            raise ValueError("model1 должен быть нейромэпом (NeuroMapFixed или NeuroMapOriginal)")
+        if not self._is_neuromap(model2):
+            raise ValueError("model2 должен быть нейромэпом (NeuroMapFixed или NeuroMapOriginal)")
+        
         self.model1 = model1
         self.model2 = model2
         
-        self.is_model1 = self._is_neuromap(model1)
-        self.is_model2 = self._is_neuromap(model2)
-        
-        if self.is_model1 and dt is None:
-            self.dt = model1.dt
-        elif self.is_model2 and dt is None:
-            self.dt = model2.dt
-        elif dt is None:
-            raise ValueError("dt должен быть указан при использовании функций эволюции")
-        else:
-            self.dt = dt
-        
-        if self.is_model1 and self.is_model2:
-            if model1.dt != model2.dt and dt is None:
-                raise ValueError(
-                    f"Модели имеют разные dt: {model1.dt} и {model2.dt}. "
-                    "Укажите явно параметр dt."
-                )
+        if model1.dt != model2.dt:
+            raise ValueError(
+                f"Модели имеют разные dt: {model1.dt} и {model2.dt}. "
+                "Обе модели должны иметь одинаковый dt."
+            )
     
     def _is_neuromap(self, obj):
         """Проверка, является ли объект нейроотображением"""
@@ -70,30 +69,21 @@ class CoupledOscillators:
                           unit='шаг', ncols=100, disable=True)
         
         for _ in iterator:
-            # Вычисляем приращения от каждой модели/функции
-            if self.is_model1:
-                X1_step = np.concatenate([u1_current, p1], axis=1)
-                d1 = self.model1.predict(X1_step)
-            else:
-                # Функция эволюции: (state, params, dt) -> next_state
-                u1_next = self.model1(u1_current[0], p1[0], self.dt)
-                d1 = np.atleast_2d(u1_next) - u1_current
+            # Вычисляем приращения от каждой модели
+            X1_step = np.concatenate([u1_current, p1], axis=1)
+            d1 = self.model1.predict(X1_step)
             
-            if self.is_model2:
-                X2_step = np.concatenate([u2_current, p2], axis=1)
-                d2 = self.model2.predict(X2_step)
-            else:
-                # Функция эволюции: (state, params, dt) -> next_state
-                u2_next = self.model2(u2_current[0], p2[0], self.dt)
-                d2 = np.atleast_2d(u2_next) - u2_current
+            X2_step = np.concatenate([u2_current, p2], axis=1)
+            d2 = self.model2.predict(X2_step)
             
             # Добавляем член связи
             coupling1, coupling2 = self._compute_coupling(
                 u1_current, u2_current, epsilon
             )
             
-            d1 = d1 + coupling1 * self.dt
-            d2 = d2 + coupling2 * self.dt
+            dt = self.model1.dt  # dt одинаковый для обеих моделей
+            d1 = d1 + coupling1 * dt
+            d2 = d2 + coupling2 * dt
             
             # Обновляем состояния
             u1_current = u1_current + d1
