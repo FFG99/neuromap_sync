@@ -105,12 +105,15 @@ def grid_of_amplitude(evolution_operator,
                       n_transient,
                       n_attractor,
                       secant_plane=None,
+                      secant_plane_derivatives=None,
                       accuracy: float = 0.0001,
                       max_steps: int = 100_000_000,
                       fixed_point_threshold: float = 1e-12,
                       n_jobs: int = -1,
                       *,
-                      model=None) -> np.ndarray:
+                      model=None,
+                      right_part=None,
+                      ) -> np.ndarray:
     """
     Параллельно строит 2-D поле амплитуд аттракторов.
     state = [x_grid, y_grid] – список из двух np.ndarray (линейки).
@@ -158,12 +161,14 @@ def grid_of_amplitude(evolution_operator,
             row = np.array([
                 np.linalg.norm(np.ptp(get_attractor_trajectory(
                     evolution_operator,
+                    right_part,
                     state,
                     [xi, y_val],
                     dt,
                     n_transient,
                     n_attractor,
                     secant_plane,
+                    secant_plane_derivatives,
                     accuracy,
                     max_steps,
                     fixed_point_threshold), axis=0))
