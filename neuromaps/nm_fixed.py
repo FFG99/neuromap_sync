@@ -440,42 +440,39 @@ class NeuroMapFixed(pl.LightningModule):
         
         return d.squeeze().cpu().detach().numpy(), J_d.cpu().detach().numpy()
 
-    def find_fixed_point(self, p, u0, tol=1e-10, max_iter=100):
+    def find_fixed_point(self, p, u0, tol=1e-10, method='hybr'):
         """
-        Поиск неподвижной точки методом Ньютона.
+        Поиск неподвижной точки через scipy.optimize.root.
         
         Args:
             p: параметры системы, shape (n_param,)
             u0: начальное приближение, shape (n_var,)
             tol: точность сходимости
-            max_iter: максимальное число итераций
+            method: метод оптимизации ('hybr', 'lm', 'broyden1', 'anderson')
         
         Returns:
             u_star: неподвижная точка, shape (n_var,)
             converged: True если сошлось
-            n_iter: число итераций
+            result: полный результат scipy для диагностики
         """
-        u = np.atleast_1d(u0).astype(np.float64)
+        from scipy.optimize import root
+        
         p = np.atleast_1d(p).astype(np.float64)
+        u0 = np.atleast_1d(u0).astype(np.float64)
         
-        for i in range(max_iter):
-            d, J_d = self.compute_d_and_jacobian(u, p)
-            
-            residual = np.linalg.norm(d)
-            if residual < tol:
-                return u, True, i
-            
-            try:
-                delta = np.linalg.solve(J_d, d)
-            except np.linalg.LinAlgError:
-                # Вырожденный якобиан — пробуем псевдообратную
-                delta = np.linalg.lstsq(J_d, d, rcond=None)[0]
-            
-            u = u - delta
+        def residual(u):
+            d, _ = self.compute_d_and_jacobian(u, p)
+            return d
         
-        return u, False, max_iter
+        def jacobian(u):
+            _, J_d = self.compute_d_and_jacobian(u, p)
+            return J_d
+        
+        result = root(residual, u0, method=method, jac=jacobian, tol=tol)
+        
+        return result.x, result.success, result
 
-    def find_all_fixed_points(self, p, bounds, n_grid=10, tol=1e-10, unique_tol=1e-6, max_iter=100):
+    def find_all_fixed_points(self, p, bounds, n_grid=10, tol=1e-10, unique_tol=1e-6, method='hybr'):
         """
         Поиск всех неподвижных точек в заданной области.
         
@@ -483,9 +480,9 @@ class NeuroMapFixed(pl.LightningModule):
             p: параметры системы, shape (n_param,)
             bounds: границы поиска, list of (min, max) для каждой переменной
             n_grid: число точек сетки по каждому измерению
-            tol: точность сходимости Ньютона
+            tol: точность сходимости
             unique_tol: порог для определения уникальности точек
-            max_iter: максимальное число итераций Ньютона
+            method: метод scipy.optimize.root ('hybr', 'lm', 'broyden1')
         
         Returns:
             fixed_points: список уникальных неподвижных точек
@@ -499,7 +496,7 @@ class NeuroMapFixed(pl.LightningModule):
         found_points = []
         
         for u0 in initial_guesses:
-            u_star, converged, _ = self.find_fixed_point(p, u0, tol=tol, max_iter=max_iter)
+            u_star, converged, _ = self.find_fixed_point(p, u0, tol=tol, method=method)
             
             if not converged:
                 continue
@@ -581,4 +578,3 @@ class NeuroMapFixed(pl.LightningModule):
         if batch_size == 1:
             return multipliers[0]
         return multipliers
-
