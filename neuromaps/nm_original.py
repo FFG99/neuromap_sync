@@ -382,3 +382,186 @@ class NeuroMapOriginal(pl.LightningModule):
                 json.dump(self.training_history, f, indent=2)
         
         return path
+
+    def compute_d_and_jacobian(self, u, p):
+        """
+        Вычисление приращения d и его якобиана за один проход.
+        
+        Для NeuroMapOriginal: d = dt * (g * su + mu_u)
+        
+        Args:
+            u: состояние, shape (n_var,) или (1, n_var)
+            p: параметры, shape (n_param,) или (1, n_param)
+        
+        Returns:
+            d: приращение, shape (n_var,)
+            J_d: якобиан dd/du, shape (n_var, n_var)
+        """
+        self.eval()
+        
+        u_tensor = torch.tensor(u, dtype=torch.float32, device=self.device)
+        p_tensor = torch.tensor(p, dtype=torch.float32, device=self.device)
+        
+        if u_tensor.dim() == 1:
+            u_tensor = u_tensor.unsqueeze(0)
+        if p_tensor.dim() == 1:
+            p_tensor = p_tensor.unsqueeze(0)
+        
+        u_norm = (u_tensor - self.mu_u) / self.su
+        p_norm = (p_tensor - self.mu_p) / self.sp
+        
+        z = torch.cat([u_norm, p_norm], dim=1)
+        
+        h_linear = self.hidden(z)
+        h_n = self.activation(h_linear)
+        g = self.output(h_n)
+        
+        # d = dt * (g * su + mu_u) — ошибочная формула
+        d = self.dt * (g * self.su + self.mu_u)
+        
+        # Якобиан: J_d = A0 @ H_n @ A1
+        h_derivative = 1 - h_n**2
+        
+        W_hidden = self.hidden.weight
+        W_u = W_hidden[:, :self.n_var]
+        W_output = self.output.weight
+        
+        A0 = W_u.T / self.su.T
+        A1 = W_output.T * self.su * self.dt  # su вместо sd
+        H_n = torch.diag(h_derivative.squeeze())
+        
+        J_d = A0 @ H_n @ A1
+        
+        return d.squeeze().cpu().detach().numpy(), J_d.cpu().detach().numpy()
+
+    def find_fixed_point(self, p, u0, tol=1e-10, method='hybr'):
+        """
+        Поиск неподвижной точки через scipy.optimize.root.
+        
+        Args:
+            p: параметры системы, shape (n_param,)
+            u0: начальное приближение, shape (n_var,)
+            tol: точность сходимости
+            method: метод оптимизации ('hybr', 'lm', 'broyden1', 'anderson')
+        
+        Returns:
+            u_star: неподвижная точка, shape (n_var,)
+            converged: True если сошлось
+            result: полный результат scipy для диагностики
+        """
+        from scipy.optimize import root
+        
+        p = np.atleast_1d(p).astype(np.float64)
+        u0 = np.atleast_1d(u0).astype(np.float64)
+        
+        def residual(u):
+            d, _ = self.compute_d_and_jacobian(u, p)
+            return d
+        
+        def jacobian(u):
+            _, J_d = self.compute_d_and_jacobian(u, p)
+            return J_d
+        
+        result = root(residual, u0, method=method, jac=jacobian, tol=tol)
+        
+        return result.x, result.success, result
+
+    def find_all_fixed_points(self, p, bounds, n_grid=10, tol=1e-10, unique_tol=1e-6, method='hybr'):
+        """
+        Поиск всех неподвижных точек в заданной области.
+        
+        Args:
+            p: параметры системы, shape (n_param,)
+            bounds: границы поиска, list of (min, max) для каждой переменной
+            n_grid: число точек сетки по каждому измерению
+            tol: точность сходимости
+            unique_tol: порог для определения уникальности точек
+            method: метод scipy.optimize.root ('hybr', 'lm', 'broyden1')
+        
+        Returns:
+            fixed_points: список уникальных неподвижных точек
+            multipliers: список мультипликаторов для каждой точки
+        """
+        grids = [np.linspace(b[0], b[1], n_grid) for b in bounds]
+        mesh = np.meshgrid(*grids, indexing='ij')
+        initial_guesses = np.stack([m.ravel() for m in mesh], axis=1)
+        
+        found_points = []
+        
+        for u0 in initial_guesses:
+            u_star, converged, _ = self.find_fixed_point(p, u0, tol=tol, method=method)
+            
+            if not converged:
+                continue
+            
+            in_bounds = all(bounds[i][0] - unique_tol <= u_star[i] <= bounds[i][1] + unique_tol 
+                          for i in range(len(bounds)))
+            if not in_bounds:
+                continue
+            
+            is_unique = True
+            for existing in found_points:
+                if np.linalg.norm(u_star - existing) < unique_tol:
+                    is_unique = False
+                    break
+            
+            if is_unique:
+                found_points.append(u_star)
+        
+        multipliers = [self.compute_fixed_point_multipliers(fp, p) for fp in found_points]
+        
+        return found_points, multipliers
+
+    def compute_fixed_point_multipliers(self, u_star, p):
+        """
+        Вычисление мультипликаторов неподвижной точки.
+        
+        Args:
+            u_star: неподвижная точка (можно найти через find_fixed_point)
+            p: параметры системы
+        
+        Returns:
+            eigenvalues: собственные значения якобиана отображения (мультипликаторы)
+        """
+        self.eval()
+        
+        u_star_tensor = torch.tensor(u_star, dtype=torch.float32, device=self.device)
+        p_tensor = torch.tensor(p, dtype=torch.float32, device=self.device)
+        
+        if u_star_tensor.dim() == 1:
+            u_star_tensor = u_star_tensor.unsqueeze(0)
+        if p_tensor.dim() == 1:
+            p_tensor = p_tensor.unsqueeze(0)
+        
+        batch_size = u_star_tensor.shape[0]
+        
+        u_norm = (u_star_tensor - self.mu_u) / self.su
+        p_norm = (p_tensor - self.mu_p) / self.sp
+        
+        z = torch.cat([u_norm, p_norm], dim=1)
+        
+        h_linear = self.hidden(z)
+        h_n = self.activation(h_linear)
+        
+        h_derivative = 1 - h_n**2
+        
+        W_hidden = self.hidden.weight
+        W_u = W_hidden[:, :self.n_var]
+        W_output = self.output.weight
+        
+        A0 = W_u.T / self.su.T
+        A1 = W_output.T * self.su * self.dt  # su вместо sd
+        
+        I = torch.eye(self.n_var, device=self.device)
+        
+        multipliers = []
+        
+        for i in range(batch_size):
+            H_n_i = torch.diag(h_derivative[i])
+            J_n = I + A0 @ H_n_i @ A1
+            eigenvalues = torch.linalg.eigvals(J_n)
+            multipliers.append(eigenvalues.cpu().detach().numpy())
+        
+        if batch_size == 1:
+            return multipliers[0]
+        return multipliers
