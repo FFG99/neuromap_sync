@@ -15,7 +15,7 @@ X, y = generate_pairs_dataset(
     seed=52
 )
 
-checkpoint_dir = "experiments/normalization/checkpoints/original"
+checkpoint_dir = "experiments/normalization_chua/checkpoints/fixed"
 checkpoint_dir_path = Path(checkpoint_dir)
 
 checkpoint_files = list(checkpoint_dir_path.glob("epoch=*.ckpt"))
@@ -36,8 +36,8 @@ else:
 
 model.fit(X, y, epochs=1000, lr=5e-4, batch_size=512, val_split=0.2, 
           checkpoint_dir=checkpoint_dir,
-          history_path="experiments/normalization/checkpoints/original/history.json")
+          history_path="experiments/normalization_chua/checkpoints/fixed/history.json")
 
-model_path = "experiments/normalization/checkpoints/original/model.ckpt"
+model_path = "experiments/normalization_chua/checkpoints/fixed/model.ckpt"
 model.save(model_path)
 print(f"Модель сохранена в {model_path}")
