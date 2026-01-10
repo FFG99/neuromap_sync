@@ -3,7 +3,7 @@ from pathlib import Path
 
 from systems import chua_rk4
 from utils import generate_pairs_dataset
-from neuromaps import NeuroMapOriginal
+from neuromaps import NeuroMapFixed
 
 X, y = generate_pairs_dataset(
     evolution_operator=chua_rk4,
@@ -23,16 +23,16 @@ if checkpoint_files:
     latest_checkpoint = max(checkpoint_files, key=lambda p: p.stat().st_mtime)
     print(f"Найден чекпоинт для продолжения: {latest_checkpoint}")
     print("Модель будет загружена автоматически при обучении")
-    model = NeuroMapOriginal(n_var=3, n_param=5, hidden_size=256, dt=0.01)
+    model = NeuroMapFixed(n_var=3, n_param=5, hidden_size=256, dt=0.01)
 else:
     checkpoint_path = checkpoint_dir_path / "model.ckpt"
     if checkpoint_path.exists():
         print(f"Загружаем модель из {checkpoint_path}")
-        model = NeuroMapOriginal.load(str(checkpoint_path))
+        model = NeuroMapFixed.load(str(checkpoint_path))
         print("Модель загружена, продолжаем обучение...")
     else:
         print("Создаем новую модель")
-        model = NeuroMapOriginal(n_var=3, n_param=5, hidden_size=256, dt=0.01)
+        model = NeuroMapFixed(n_var=3, n_param=5, hidden_size=256, dt=0.01)
 
 model.fit(X, y, epochs=1000, lr=5e-4, batch_size=512, val_split=0.2, 
           checkpoint_dir=checkpoint_dir,

@@ -9,6 +9,10 @@ def plot_trajectory(traj,
     variables_names=None,
     title=None):
     
+    if traj is None:
+        logger.info("Траектория разбежалась")
+        return
+
     if len(traj) == 0:
         raise ValueError("Траектория не может быть пустой")
     

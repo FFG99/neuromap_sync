@@ -11,7 +11,8 @@ logger = get_logger(__name__)
 
 def pass_transient_process(evolution_operator, state, params, dt, 
                            required_number_of_intersections, secant_plane,
-                           fixed_point_threshold=1e-12, max_steps=100_000_000) -> np.ndarray | None:
+                           fixed_point_threshold=1e-12, max_steps=100_000_000,
+                           divergence_threshold=1e5) -> np.ndarray | None:
     logger.debug(f"Начало прохождения переходного процесса: required_intersections={required_number_of_intersections}, max_steps={max_steps}")
     
     number_of_intersections = 0
@@ -26,6 +27,8 @@ def pass_transient_process(evolution_operator, state, params, dt,
         
         previous_state = current_state
         current_state = evolution_operator(current_state, params, dt)
+        if np.linalg.norm(current_state - [0]*len(state)) > divergence_threshold:
+            return None
 
         if np.linalg.norm(current_state - previous_state) < fixed_point_threshold:
             return current_state
@@ -52,6 +55,8 @@ def get_attractor_trajectory(evolution_operator, right_part,
 
     state = pass_transient_process(evolution_operator, state, params,
                                    dt, n_transient, secant_plane, fixed_point_threshold, max_steps)
+
+    if state == None: return None
     
     logger.debug(f"Состояние после переходного процесса: {state}")
 
