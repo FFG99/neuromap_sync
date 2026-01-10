@@ -31,6 +31,29 @@ def plot_trajectory(traj,
 
             plt.tight_layout()
             plt.show()
+        case 3:
+            xs = [x[0] for x in traj]
+            ys = [x[1] for x in traj]
+            zs = [x[2] for x in traj]
+
+            fig = plt.figure()
+            ax = fig.add_subplot(111, projection='3d')
+            ax.scatter(xs, ys, zs, s=0.1)
+
+            if variables_names is None:
+                ax.set_xlabel(r'$x$')
+                ax.set_ylabel(r'$y$')
+                ax.set_zlabel(r'$z$')
+            else:
+                ax.set_xlabel(variables_names[0])
+                ax.set_ylabel(variables_names[1])
+                ax.set_zlabel(variables_names[2])
+
+            if title:
+                ax.set_title(title)
+
+            plt.tight_layout()
+            plt.show()
         case 4:
             xs  = [x[0] for x in traj]
             dxs = [x[1] for x in traj]
