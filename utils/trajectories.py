@@ -49,14 +49,15 @@ def get_attractor_trajectory(evolution_operator, right_part,
                              n_transient, n_attractor, 
                              secant_plane, secant_plane_derivatives,
                              accuracy=1e-4, max_steps=100_000_000,
-                             fixed_point_threshold=1e-12):
+                             fixed_point_threshold=1e-12,
+                             divergence_threshold=1e5):
     
     logger.debug(f"Начало получения траектории аттрактора: n_transient={n_transient}, n_attractor={n_attractor}, accuracy={accuracy}")
 
     state = pass_transient_process(evolution_operator, state, params,
-                                   dt, n_transient, secant_plane, fixed_point_threshold, max_steps)
+                                   dt, n_transient, secant_plane, fixed_point_threshold, max_steps, divergence_threshold)
 
-    if state == None: return None
+    if state is None: return None
     
     logger.debug(f"Состояние после переходного процесса: {state}")
 

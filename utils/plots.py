@@ -89,60 +89,6 @@ def plot_trajectory(traj,
         case _:
             raise ValueError(f"Траектория размерности {dimension} не поддерживается")
 
-def plot_compare(traj_ode, traj_nm, caption=None):
-    """
-    Сравнение двух 2D траекторий рядом друг с другом
-    
-    Args:
-        traj_ode: траектория ODE (Original)
-        traj_nm: траектория Neuromap
-        caption: опциональный общий заголовок
-    """
-    if len(traj_ode) == 0 or len(traj_nm) == 0:
-        raise ValueError("Траектории не могут быть пустыми")
-    
-    dim_ode = len(traj_ode[0])
-    dim_nm = len(traj_nm[0])
-    
-    if dim_ode != 2 or dim_nm != 2:
-        raise ValueError(f"plot_compare поддерживает только 2D траектории. Получены размерности: {dim_ode} и {dim_nm}")
-    
-    xs_ode = [x for (x, y) in traj_ode]
-    ys_ode = [y for (x, y) in traj_ode]
-    
-    xs_nm = [x for (x, y) in traj_nm]
-    ys_nm = [y for (x, y) in traj_nm]
-    
-    # Вычисляем общие пределы для обеих траекторий
-    x_min = min(min(xs_ode), min(xs_nm))
-    x_max = max(max(xs_ode), max(xs_nm))
-    y_min = min(min(ys_ode), min(ys_nm))
-    y_max = max(max(ys_ode), max(ys_nm))
-    
-    fig, axs = plt.subplots(1, 2, figsize=(16, 7))
-    
-    axs[0].scatter(xs_ode, ys_ode, s=0.1)
-    axs[0].set_xlabel(r'$x$')
-    axs[0].set_ylabel(r'$\dot{x}$')
-    axs[0].set_title('Original')
-    axs[0].grid(True)
-    axs[0].set_xlim(x_min, x_max)
-    axs[0].set_ylim(y_min, y_max)
-    
-    axs[1].scatter(xs_nm, ys_nm, s=0.1)
-    axs[1].set_xlabel(r'$x$')
-    axs[1].set_ylabel(r'$\dot{x}$')
-    axs[1].set_title('Neuromap')
-    axs[1].grid(True)
-    axs[1].set_xlim(x_min, x_max)
-    axs[1].set_ylim(y_min, y_max)
-    
-    if caption:
-        fig.suptitle(caption, fontsize=14)
-    
-    plt.tight_layout()
-    plt.show()
-
 
 def plot_heatmap(x, y, Z, *, x_label='x', y_label='y'):
     X, Y = np.meshgrid(x, y)
@@ -196,4 +142,353 @@ def plot_compare_heatmaps(x, y, Z_ode, Z_nm, caption=None, *, x_label='x', y_lab
     if caption:
         fig.suptitle(caption, fontsize=14)
     
+    plt.show()
+
+
+def plot_compare_trajectories(*trajectories, 
+                             labels=None, 
+                             caption=None, 
+                             variables_names=None,
+                             colors=None,
+                             figsize=None,
+                             layout='overlay',
+                             alpha=0.7,
+                             point_size=0.5):
+    """
+    Универсальное сравнение любого количества траекторий любой размерности
+    
+    Args:
+        *trajectories: произвольное количество траекторий (каждая может быть None для divergence)
+        labels: список подписей для траекторий (по умолчанию 'Trajectory 1', 'Trajectory 2', ...)
+        caption: общий заголовок графика
+        variables_names: названия переменных для осей (по умолчанию зависит от размерности)
+        colors: цвета для траекторий (по умолчанию автоматические)
+        figsize: размер фигуры (по умолчанию зависит от размерности и количества траекторий)
+        layout: 'overlay' - все траектории на одном графике, 'sidebyside' - отдельные графики рядом
+        alpha: прозрачность точек (по умолчанию 0.7)
+        point_size: размер точек (по умолчанию 0.5)
+    """
+    if not trajectories:
+        raise ValueError("Необходимо передать хотя бы одну траекторию")
+    
+    # Определяем размерность по первой непустой траектории
+    dimension = None
+    for traj in trajectories:
+        if traj is not None and len(traj) > 0:
+            dimension = len(traj[0])
+            break
+    
+    if dimension is None:
+        logger.warning("Все траектории пустые или None")
+        return
+    
+    # Генерируем подписи по умолчанию
+    if labels is None:
+        labels = [f'Trajectory {i+1}' for i in range(len(trajectories))]
+    
+    # Генерируем названия переменных по умолчанию
+    if variables_names is None:
+        if dimension == 2:
+            variables_names = [r'$x$', r'$\dot{x}$']
+        elif dimension == 3:
+            variables_names = [r'$x$', r'$y$', r'$z$']
+        elif dimension == 4:
+            variables_names = [r'$x$', r'$\dot{x}$', r'$y$', r'$\dot{y}$']
+        else:
+            variables_names = [f'$x_{i+1}$' for i in range(dimension)]
+    
+    # Генерируем цвета по умолчанию
+    if colors is None:
+        import matplotlib.pyplot as plt
+        cmap = plt.cm.tab10
+        colors = [cmap(i % 10) for i in range(len(trajectories))]
+    
+    # Определяем размер фигуры по умолчанию
+    if figsize is None:
+        if layout == 'sidebyside':
+            if dimension == 2:
+                figsize = (5 * len(trajectories), 6)
+            elif dimension == 3:
+                figsize = (6 * len(trajectories), 8)
+            elif dimension == 4:
+                figsize = (16, 7)
+            else:
+                figsize = (5 * len(trajectories), 6)
+        else:  # overlay
+            if dimension == 2:
+                figsize = (10, 8)
+            elif dimension == 3:
+                figsize = (12, 9)
+            elif dimension == 4:
+                figsize = (16, 7)
+            else:
+                figsize = (12, 8)
+    
+    # Обрабатываем разные размерности
+    if dimension == 2:
+        _plot_2d_trajectories(trajectories, labels, colors, variables_names, caption, figsize, layout, alpha, point_size)
+    elif dimension == 3:
+        _plot_3d_trajectories(trajectories, labels, colors, variables_names, caption, figsize, layout, alpha, point_size)
+    elif dimension == 4:
+        _plot_4d_trajectories(trajectories, labels, colors, variables_names, caption, figsize, alpha, point_size)
+    else:
+        raise ValueError(f"Траектории размерности {dimension} не поддерживаются")
+
+
+def _plot_2d_trajectories(trajectories, labels, colors, variables_names, caption, figsize, layout, alpha, point_size):
+    """Отображение 2D траекторий"""
+    if layout == 'sidebyside':
+        # Отдельные графики рядом
+        valid_trajectories = [t for t in trajectories if t is not None and len(t) > 0]
+        if len(valid_trajectories) == 0:
+            logger.warning("Нет валидных траекторий для отображения")
+            return
+        
+        fig, axs = plt.subplots(1, len(trajectories), figsize=figsize)
+        if len(trajectories) == 1:
+            axs = [axs]
+        
+        # Для вычисления общих пределов
+        all_xs, all_ys = [], []
+        for traj in valid_trajectories:
+            xs = [point[0] for point in traj]
+            ys = [point[1] for point in traj]
+            all_xs.extend(xs)
+            all_ys.extend(ys)
+        
+        x_min, x_max = (min(all_xs), max(all_xs)) if all_xs else (0, 1)
+        y_min, y_max = (min(all_ys), max(all_ys)) if all_ys else (0, 1)
+        
+        # Добавляем небольшой отступ
+        x_range = x_max - x_min
+        y_range = y_max - y_min
+        x_margin = x_range * 0.05 if x_range > 0 else 0.1
+        y_margin = y_range * 0.05 if y_range > 0 else 0.1
+        
+        for i, (traj, label, color) in enumerate(zip(trajectories, labels, colors)):
+            ax = axs[i]
+            
+            if traj is None:
+                # Элегантное отображение divergence
+                ax.text(0.5, 0.5, 'Divergence', 
+                       ha='center', va='center', transform=ax.transAxes,
+                       fontsize=16, color='red', weight='bold',
+                       bbox=dict(boxstyle="round,pad=0.3", facecolor='lightgray', alpha=0.8))
+                logger.info(f"{label}: divergence")
+            elif len(traj) == 0:
+                ax.text(0.5, 0.5, 'Empty', 
+                       ha='center', va='center', transform=ax.transAxes,
+                       fontsize=16, color='gray', style='italic')
+                logger.warning(f"{label}: пустая траектория")
+            else:
+                xs = [point[0] for point in traj]
+                ys = [point[1] for point in traj]
+                ax.scatter(xs, ys, color=color, alpha=alpha, s=point_size, rasterized=True)
+            
+            ax.set_xlabel(variables_names[0], fontsize=12)
+            ax.set_ylabel(variables_names[1], fontsize=12)
+            ax.set_title(label, fontsize=14, weight='bold')
+            ax.grid(True, alpha=0.3)
+            ax.set_xlim(x_min - x_margin, x_max + x_margin)
+            ax.set_ylim(y_min - y_margin, y_max + y_margin)
+        
+    else:  # overlay
+        fig, ax = plt.subplots(figsize=figsize)
+        
+        # Сначала отображаем валидные траектории
+        for traj, label, color in zip(trajectories, labels, colors):
+            if traj is not None and len(traj) > 0:
+                xs = [point[0] for point in traj]
+                ys = [point[1] for point in traj]
+                ax.scatter(xs, ys, label=label, color=color, alpha=alpha, s=point_size, rasterized=True)
+        
+        # Затем добавляем divergence траектории в легенду
+        for traj, label, color in zip(trajectories, labels, colors):
+            if traj is None:
+                ax.scatter([], [], label=f"{label} (divergence)", color=color, 
+                          marker='x', s=50, alpha=0.8)
+                logger.info(f"{label}: divergence")
+        
+        ax.set_xlabel(variables_names[0], fontsize=12)
+        ax.set_ylabel(variables_names[1], fontsize=12)
+        ax.grid(True, alpha=0.3)
+        ax.legend(framealpha=0.9)
+    
+    if caption:
+        if layout == 'sidebyside':
+            fig.suptitle(caption, fontsize=16, weight='bold')
+        else:
+            ax.set_title(caption, fontsize=16, weight='bold')
+    
+    plt.tight_layout()
+    plt.show()
+
+
+def _plot_3d_trajectories(trajectories, labels, colors, variables_names, caption, figsize, layout, alpha, point_size):
+    """Отображение 3D траекторий"""
+    if layout == 'sidebyside':
+        # Отдельные 3D графики рядом
+        valid_trajectories = [t for t in trajectories if t is not None and len(t) > 0]
+        if len(valid_trajectories) == 0:
+            logger.warning("Нет валидных траекторий для отображения")
+            return
+        
+        fig = plt.figure(figsize=figsize)
+        
+        # Для вычисления общих пределов
+        all_xs, all_ys, all_zs = [], [], []
+        for traj in valid_trajectories:
+            xs = [point[0] for point in traj]
+            ys = [point[1] for point in traj]
+            zs = [point[2] for point in traj]
+            all_xs.extend(xs)
+            all_ys.extend(ys)
+            all_zs.extend(zs)
+        
+        x_min, x_max = (min(all_xs), max(all_xs)) if all_xs else (0, 1)
+        y_min, y_max = (min(all_ys), max(all_ys)) if all_ys else (0, 1)
+        z_min, z_max = (min(all_zs), max(all_zs)) if all_zs else (0, 1)
+        
+        # Добавляем небольшой отступ
+        x_range = x_max - x_min
+        y_range = y_max - y_min
+        z_range = z_max - z_min
+        x_margin = x_range * 0.05 if x_range > 0 else 0.1
+        y_margin = y_range * 0.05 if y_range > 0 else 0.1
+        z_margin = z_range * 0.05 if z_range > 0 else 0.1
+        
+        for i, (traj, label, color) in enumerate(zip(trajectories, labels, colors)):
+            ax = fig.add_subplot(1, len(trajectories), i+1, projection='3d')
+            
+            if traj is None:
+                # Элегантное отображение divergence в 3D
+                ax.text(0.5, 0.5, 0.5, 'Divergence', 
+                       ha='center', va='center', transform=ax.transAxes,
+                       fontsize=14, color='red', weight='bold')
+                logger.info(f"{label}: divergence")
+            elif len(traj) == 0:
+                ax.text(0.5, 0.5, 0.5, 'Empty', 
+                       ha='center', va='center', transform=ax.transAxes,
+                       fontsize=14, color='gray', style='italic')
+                logger.warning(f"{label}: пустая траектория")
+            else:
+                xs = [point[0] for point in traj]
+                ys = [point[1] for point in traj]
+                zs = [point[2] for point in traj]
+                ax.scatter(xs, ys, zs, color=color, alpha=alpha, s=point_size, rasterized=True)
+            
+            ax.set_xlabel(variables_names[0], fontsize=10)
+            ax.set_ylabel(variables_names[1], fontsize=10)
+            ax.set_zlabel(variables_names[2], fontsize=10)
+            ax.set_title(label, fontsize=12, weight='bold')
+            ax.set_xlim(x_min - x_margin, x_max + x_margin)
+            ax.set_ylim(y_min - y_margin, y_max + y_margin)
+            ax.set_zlim(z_min - z_margin, z_max + z_margin)
+        
+    else:  # overlay
+        fig = plt.figure(figsize=figsize)
+        ax = fig.add_subplot(111, projection='3d')
+        
+        # Сначала отображаем валидные траектории
+        for traj, label, color in zip(trajectories, labels, colors):
+            if traj is not None and len(traj) > 0:
+                xs = [point[0] for point in traj]
+                ys = [point[1] for point in traj]
+                zs = [point[2] for point in traj]
+                ax.scatter(xs, ys, zs, label=label, color=color, alpha=alpha, s=point_size, rasterized=True)
+        
+        # Затем добавляем divergence траектории в легенду
+        for traj, label, color in zip(trajectories, labels, colors):
+            if traj is None:
+                ax.scatter([], [], [], label=f"{label} (divergence)", color=color, 
+                          marker='x', s=50, alpha=0.8)
+                logger.info(f"{label}: divergence")
+        
+        ax.set_xlabel(variables_names[0], fontsize=12)
+        ax.set_ylabel(variables_names[1], fontsize=12)
+        ax.set_zlabel(variables_names[2], fontsize=12)
+        ax.legend(framealpha=0.9)
+    
+    if caption:
+        if layout == 'sidebyside':
+            fig.suptitle(caption, fontsize=16, weight='bold')
+        else:
+            ax.set_title(caption, fontsize=16, weight='bold')
+    
+    plt.tight_layout()
+    plt.show()
+
+
+def _plot_4d_trajectories(trajectories, labels, colors, variables_names, caption, figsize, alpha, point_size):
+    """Отображение 4D траекторий как два 2D графика"""
+    fig, axs = plt.subplots(1, 2, figsize=figsize)
+    
+    # Для вычисления общих пределов
+    all_x1, all_x2, all_y1, all_y2 = [], [], [], []
+    
+    for traj in trajectories:
+        if traj is not None and len(traj) > 0:
+            x1s = [point[0] for point in traj]
+            x2s = [point[1] for point in traj]
+            y1s = [point[2] for point in traj]
+            y2s = [point[3] for point in traj]
+            
+            all_x1.extend(x1s)
+            all_x2.extend(x2s)
+            all_y1.extend(y1s)
+            all_y2.extend(y2s)
+    
+    # Добавляем небольшие отступы
+    if all_x1 and all_x2:
+        x1_min, x1_max = min(all_x1), max(all_x1)
+        x2_min, x2_max = min(all_x2), max(all_x2)
+        x1_range = x1_max - x1_min
+        x2_range = x2_max - x2_min
+        x1_margin = x1_range * 0.05 if x1_range > 0 else 0.1
+        x2_margin = x2_range * 0.05 if x2_range > 0 else 0.1
+        axs[0].set_xlim(x1_min - x1_margin, x1_max + x1_margin)
+        axs[0].set_ylim(x2_min - x2_margin, x2_max + x2_margin)
+    
+    if all_y1 and all_y2:
+        y1_min, y1_max = min(all_y1), max(all_y1)
+        y2_min, y2_max = min(all_y2), max(all_y2)
+        y1_range = y1_max - y1_min
+        y2_range = y2_max - y2_min
+        y1_margin = y1_range * 0.05 if y1_range > 0 else 0.1
+        y2_margin = y2_range * 0.05 if y2_range > 0 else 0.1
+        axs[1].set_xlim(y1_min - y1_margin, y1_max + y1_margin)
+        axs[1].set_ylim(y2_min - y2_margin, y2_max + y2_margin)
+    
+    for traj, label, color in zip(trajectories, labels, colors):
+        if traj is None:
+            # Элегантное отображение divergence
+            axs[0].scatter([], [], label=f"{label} (divergence)", color=color, 
+                          marker='x', s=50, alpha=0.8)
+            axs[1].scatter([], [], color=color, marker='x', s=50, alpha=0.8)
+            logger.info(f"{label}: divergence")
+        elif len(traj) == 0:
+            logger.warning(f"{label}: пустая траектория")
+            continue
+        else:
+            x1s = [point[0] for point in traj]
+            x2s = [point[1] for point in traj]
+            y1s = [point[2] for point in traj]
+            y2s = [point[3] for point in traj]
+            
+            axs[0].scatter(x1s, x2s, label=label, color=color, alpha=alpha, s=point_size, rasterized=True)
+            axs[1].scatter(y1s, y2s, color=color, alpha=alpha, s=point_size, rasterized=True)
+    
+    axs[0].set_xlabel(variables_names[0], fontsize=12)
+    axs[0].set_ylabel(variables_names[1], fontsize=12)
+    axs[0].grid(True, alpha=0.3)
+    axs[0].legend(framealpha=0.9)
+    
+    axs[1].set_xlabel(variables_names[2], fontsize=12)
+    axs[1].set_ylabel(variables_names[3], fontsize=12)
+    axs[1].grid(True, alpha=0.3)
+    
+    if caption:
+        fig.suptitle(caption, fontsize=16, weight='bold')
+    
+    plt.tight_layout()
     plt.show()
