@@ -1,5 +1,10 @@
 import numpy as np
 from matplotlib import pyplot as plt
+from matplotlib.colors import ListedColormap
+from matplotlib.patches import Rectangle
+import matplotlib.patches as mpatches
+from typing import Dict, Optional, Tuple
+
 from .logger import get_logger
 
 logger = get_logger(__name__)
@@ -90,19 +95,84 @@ def plot_trajectory(traj,
             raise ValueError(f"Траектория размерности {dimension} не поддерживается")
 
 
-def plot_heatmap(x, y, Z, *, x_label='x', y_label='y'):
+def plot_heatmap(x, y, Z, *, x_label='x', y_label='y', title=None):
     X, Y = np.meshgrid(x, y)
 
     fig, ax = plt.subplots(figsize=(10, 8))
-    cs = ax.contourf(X, Y, Z, levels=50, cmap="plasma")
 
-    cbar = fig.colorbar(cs, ax=ax)
+    im = ax.imshow(Z, extent=[x[0], x[-1], y[0], y[-1]], origin='lower',
+                   aspect='auto', interpolation='none', cmap='plasma')
 
     ax.set_xlabel(x_label)
     ax.set_ylabel(y_label)
 
+    if title:
+        ax.set_title(title)
+
+    cbar = fig.colorbar(im, ax=ax)
     plt.tight_layout()
-    plt.show()
+
+
+def visualize_dynamic_regime_grid(Z: np.ndarray,
+                                  x_grid: np.ndarray,
+                                  y_grid: np.ndarray,
+                                  x_param_name: str = "x",
+                                  y_param_name: str = "y",
+                                  regime_mapping: Optional[Dict[str, str]] = None,
+                                  regime_colors: Optional[Dict[str, str]] = None,
+                                  cmap: str = "tab20",
+                                  title: Optional[str] = None,
+                                  figsize: Tuple[int, int] = (10, 8),
+                                  save_path: Optional[str] = None,
+                                  show: bool = True) -> None:
+    """
+    Визуализирует сетку динамических режимов с помощью imshow.
+    """
+    Z_str = Z.astype(str)
+    
+    unique_regimes = np.unique(Z_str[Z_str != "unknown"])
+    
+    if regime_mapping is None:
+        regime_mapping = {r: r for r in unique_regimes}
+        if "unknown" in Z_str:
+            regime_mapping["unknown"] = "неизвестный"
+    
+    if regime_colors is None:
+        cmap_obj = plt.get_cmap(cmap, len(regime_mapping))
+        regime_colors = {regime: cmap_obj(i) for i, regime in enumerate(regime_mapping.keys())}
+    
+    unique_regimes = list(regime_mapping.keys())
+    regime_to_int = {regime: idx for idx, regime in enumerate(unique_regimes)}
+    
+    Z_int = np.zeros(Z_str.shape, dtype=int)
+    for regime, int_val in regime_to_int.items():
+        Z_int[Z_str == regime] = int_val
+    
+    colors = [regime_colors[regime] for regime in unique_regimes]
+    cmap_obj = ListedColormap(colors)
+    
+    fig, ax = plt.subplots(figsize=figsize)
+    im = ax.imshow(Z_int, aspect='auto', origin='lower',
+                   extent=[x_grid.min(), x_grid.max(), y_grid.min(), y_grid.max()],
+                   cmap=cmap_obj, vmin=-0.5, vmax=len(unique_regimes)-0.5)
+    
+    cbar = plt.colorbar(im, ax=ax, shrink=0.8, ticks=range(len(unique_regimes)))
+    cbar.ax.set_yticklabels([regime_mapping[regime] for regime in unique_regimes])
+    
+    ax.set_xlabel(f'{x_param_name}')
+    ax.set_ylabel(f'{y_param_name}')
+    if title:
+        ax.set_title(title)
+    ax.grid(True, linestyle='--', alpha=0.7)
+    
+    if save_path:
+        plt.savefig(save_path, dpi=300, bbox_inches='tight')
+        print(f"Сохранено: {save_path}")
+    
+    if show:
+        plt.show()
+    else:
+        plt.close()
 
 
 def plot_compare_heatmaps(x, y, Z_ode, Z_nm, caption=None, *, x_label='x', y_label='y', cmap='plasma'):
