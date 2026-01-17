@@ -106,7 +106,7 @@ def generate_pairs_dataset_filtered(evolution_operator, right_part,
             Статистика генерации:
             - 'total_trajectories_processed': общее число обработанных траекторий
             - 'rejected_fixed_points': число отброшенных неподвижных точек
-            - 'rejected_divergence': число расходящихся траекторий
+            - 'divergence_trajs_number': число расходящихся траекторий
             - 'accepted_trajectories': число принятых траекторий
             - 'total_samples_generated': фактическое число сгенерированных образцов
             - 'target_samples': целевое число образцов
@@ -119,7 +119,7 @@ def generate_pairs_dataset_filtered(evolution_operator, right_part,
     X, y = [], []
     traj_processed = 0
     traj_rejected_ep = 0
-    traj_rejected_divergence = 0
+    divergence_trajs_number = 0
 
     while len(X) < target_samples:
         # Случайные начальные условия и параметры
@@ -172,6 +172,7 @@ def generate_pairs_dataset_filtered(evolution_operator, right_part,
                 
                 # Проверка на расходимость
                 if np.any(np.isnan(x)) or np.any(np.abs(x) > div_threshold):
+                    divergence_trajs_number += 1
                     break
                     
         except Exception:
@@ -187,8 +188,8 @@ def generate_pairs_dataset_filtered(evolution_operator, right_part,
     info = {
         "total_trajectories_processed": traj_processed,
         "rejected_fixed_points": traj_rejected_ep,
-        "rejected_divergence": traj_rejected_divergence,
-        "accepted_trajectories": traj_processed - traj_rejected_ep - traj_rejected_divergence,
+        "divergence_trajs_number": divergence_trajs_number,
+        "accepted_trajectories": traj_processed - traj_rejected_ep,
         "total_samples_generated": len(X),
         "target_samples": target_samples
     }
