@@ -2,26 +2,28 @@ import numpy as np
 from pathlib import Path
 
 from systems.generator_3d import generator_3d_rk4, generator_3d_right_part
-from utils import generate_pairs_dataset_filtered
+from utils import DynamicSystemDatasetGenerator
 from neuromaps import NeuroMapOriginal
 
-X, y, info = generate_pairs_dataset_filtered(
+dataset_generator = DynamicSystemDatasetGenerator(
     evolution_operator=generator_3d_rk4,
     right_part=generator_3d_right_part,
     variables_ranges=[(-10, 10), (-50, 50), (-20, 20)],
     parameters_ranges=[(-1, 7), (1/23, 1/18), (5, 8), (0.02, 0.02)], # lambda_, beta, w0, k 
-    target_samples=5_000_000,
-    n_transient=500,
+    n_transient=250,
     steps_per_trajectory=5,
-    fp_threshold=1e-5,
-    div_threshold=1e3,
+    fp_threshold=1e-4,
+    div_threshold=750,
     secant_plane=lambda x, y: x[1],
     secant_plane_derivatives=lambda x, y: [0, 1, 0],
-    accuracy=1e-4,
+    accuracy=1e-6,
     dt=0.01,
     seed=52,
     n_jobs=50
 )
+X, y, info = dataset_generator.generate(target_samples=100_000, n_jobs=20)
+
+dataset_generator.save("experiments/gen_3d_norm/dataset.npz", overwrite=True)
 
 print(info)
 
