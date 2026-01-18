@@ -1,4 +1,9 @@
 import numpy as np
+import multiprocessing as mp
+from typing import Callable, Optional, Tuple, Dict, Any
+import os
+import json
+import warnings
 
 from .trajectories import calculate_dynamic_regime
 
@@ -46,152 +51,370 @@ def generate_pairs_dataset(evolution_operator,
     return np.array(X), np.array(y)
 
 
-def generate_pairs_dataset_filtered(evolution_operator, right_part,
-                                    variables_ranges,
-                                    parameters_ranges,
-                                    target_samples,
-                                    n_transient=200,
-                                    steps_per_trajectory=5,
-                                    fp_threshold=1e-12,
-                                    div_threshold=1e5,
-                                    secant_plane=None,
-                                    secant_plane_derivatives=None,
-                                    accuracy=1e-3,
-                                    dt=0.01,
-                                    seed=52):
+class DynamicSystemDatasetGenerator:
     """
-    Генерация датасета с фильтрацией по типу аттрактора.
-    
-    Генерирует пары (X, y), где X = [state, parameters], а y = Δstate,
-    но только для траекторий, которые НЕ приводят к неподвижной точке 
-    (equilibrium point). Для каждой подходящей траектории берутся 
-    первые `steps_per_trajectory` шагов.
-    
-    Args:
-        evolution_operator: callable
-            Функция эволюции системы: (state, params, dt) -> next_state
-        right_part: callable
-            Правая часть дифференциального уравнения для определения типа аттрактора
-        variables_ranges: list of tuples
-            Диапазоны для переменных фазового пространства: [(min, max), ...]
-        parameters_ranges: list of tuples
-            Диапазоны для параметров системы: [(min, max), ...]
-        target_samples: int
-            Целевое количество пар (X, y) в датасете
-        n_transient: int, optional
-            Число шагов для трансиентного процесса при определении типа аттрактора
-        steps_per_trajectory: int, optional
-            Сколько первых шагов брать с каждой траектории (по умолчанию 5)
-        fp_threshold: float, optional
-            Порог для определения неподвижной точки
-        div_threshold: float, optional
-            Порог для определения расходимости траектории
-        secant_plane: ndarray or None, optional
-            Секущая плоскость для определения типа аттрактора
-        secant_plane_derivatives: ndarray or None, optional
-            Производные секущей плоскости
-        accuracy: float, optional
-            Точность для определения типа аттрактора
-        dt: float, optional
-            Шаг интегрирования по времени
-        seed: int, optional
-            Seed для генератора случайных чисел
+    Генератор датасета пар (состояние, параметры) -> приращение для динамических систем
+    с фильтрацией по типу аттрактора.
+    """
+    def __init__(self,
+                 evolution_operator: Callable,
+                 right_part: Callable,
+                 variables_ranges: list,
+                 parameters_ranges: list,
+                 n_transient: int = 200,
+                 steps_per_trajectory: int = 5,
+                 fp_threshold: float = 1e-12,
+                 div_threshold: float = 1e5,
+                 secant_plane: Optional[Callable] = None,
+                 secant_plane_derivatives: Optional[Callable] = None,
+                 accuracy: float = 1e-3,
+                 dt: float = 0.01,
+                 seed: int = 52):
+        """
+        Параметры:
+            evolution_operator: Функция эволюции системы: (state, params, dt) -> next_state
+            right_part: Правая часть ДУ для определения типа аттрактора
+            variables_ranges: Диапазоны переменных фазового пространства: [(min, max), ...]
+            parameters_ranges: Диапазоны параметров системы: [(min, max), ...]
+            n_transient: Число шагов для трансиентного процесса
+            steps_per_trajectory: Сколько первых шагов брать с каждой траектории
+            fp_threshold: Порог для определения неподвижной точки
+            div_threshold: Порог для определения расходимости
+            secant_plane: Функция секущей плоскости для определения типа аттрактора
+            secant_plane_derivatives: Функция производных секущей плоскости
+            accuracy: Точность для определения типа аттрактора
+            dt: Шаг интегрирования
+            seed: Seed для генератора случайных чисел
+        """
+        self.evolution_operator = evolution_operator
+        self.right_part = right_part
+        self.variables_ranges = variables_ranges
+        self.parameters_ranges = parameters_ranges
+        self.n_transient = n_transient
+        self.steps_per_trajectory = steps_per_trajectory
+        self.fp_threshold = fp_threshold
+        self.div_threshold = div_threshold
+        self.secant_plane = secant_plane
+        self.secant_plane_derivatives = secant_plane_derivatives
+        self.accuracy = accuracy
+        self.dt = dt
+        self.seed = seed
+        
+        self.rng = np.random.default_rng(seed)
+        self.n_var = len(variables_ranges)
+        self.n_param = len(parameters_ranges)
+        
+        self.X: Optional[np.ndarray] = None
+        self.y: Optional[np.ndarray] = None
+        self.info: Optional[Dict[str, Any]] = None
+
+    def generate(self, target_samples: int, resume: bool = False, 
+        n_jobs: int = -1) -> Tuple[np.ndarray, np.ndarray, Dict[str, Any]]:
+        """
+        Генерация датасета.
+        
+        Args:
+            target_samples: Целевое количество пар (X, y)
+            resume: Если True, продолжает генерацию существующего датасета
+            n_jobs: Количество параллельных задач (-1 = все ядра)
             
-    Returns:
-        X: ndarray
-            Массив состояний и параметров, shape (N, n_var + n_param)
-        y: ndarray
-            Массив приращений, shape (N, n_var)
-        info: dict
-            Статистика генерации:
-            - 'total_trajectories_processed': общее число обработанных траекторий
-            - 'rejected_fixed_points': число отброшенных неподвижных точек
-            - 'divergence_trajs_number': число расходящихся траекторий
-            - 'accepted_trajectories': число принятых траекторий
-            - 'total_samples_generated': фактическое число сгенерированных образцов
-            - 'target_samples': целевое число образцов
-    """
-    rng = np.random.default_rng(seed)
-    
-    n_var = len(variables_ranges)
-    n_param = len(parameters_ranges)
-    
-    X, y = [], []
-    traj_processed = 0
-    traj_rejected_ep = 0
-    divergence_trajs_number = 0
+        Returns:
+            X: Массив состояний и параметров (N, n_var + n_param)
+            y: Массив приращений (N, n_var)
+            info: Статистика генерации
+        """
+        import concurrent.futures
+        
+        if n_jobs == -1:
+            n_jobs = mp.cpu_count()
+        
+        if resume and self.X is not None:
+            X_list = self.X.tolist()
+            y_list = self.y.tolist()
+            start_count = len(X_list)
+            info = self.info.copy() if self.info else self._init_info()
+        else:
+            X_list, y_list = [], []
+            start_count = 0
+            info = self._init_info()
+        
+        print(f"Начало генерации. Цель: {target_samples} образцов. "
+            f"Начальное количество: {start_count}. Параллелизм: {n_jobs} потоков")
+        
+        # Пулы для параллельного вычисления режимов
+        futures_pool = []
+        pending_points = []
+        
+        with concurrent.futures.ThreadPoolExecutor(max_workers=n_jobs) as executor:
+            # Инициализируем первый батч задач
+            batch_size = min(n_jobs * 2, 100)
+            for _ in range(batch_size):
+                if len(X_list) >= target_samples:
+                    break
+                    
+                x_init, p_init = self._generate_random_point()
+                future = executor.submit(self._calculate_regime, x_init, p_init)
+                futures_pool.append((future, x_init, p_init))
+            
+            while len(X_list) < target_samples:
+                if not futures_pool:
+                    break
+                    
+                # Ждем завершения следующей задачи
+                done, _ = concurrent.futures.wait(
+                    [f[0] for f in futures_pool], 
+                    return_when=concurrent.futures.FIRST_COMPLETED
+                )
+                
+                # Обрабатываем завершенные задачи
+                new_futures_pool = []
+                for future, x_init, p_init in futures_pool:
+                    if future in done:
+                        info['total_trajectories_processed'] += 1
+                        
+                        try:
+                            regime = future.result()
+                            
+                            # Пропуск неподвижных точек
+                            if regime.get("type") == "EP":
+                                info['rejected_fixed_points'] += 1
+                            else:
+                                # Генерация шагов траектории
+                                if self._generate_trajectory_steps(x_init, p_init, X_list, y_list, info):
+                                    info['accepted_trajectories'] += 1
+                        except Exception as e:
+                            info['errors'] = info.get('errors', 0) + 1
+                            if info['errors'] % 10 == 0:  # Логируем каждую 10-ю ошибку
+                                print(f"Ошибка при обработке траектории: {e}")
+                    else:
+                        new_futures_pool.append((future, x_init, p_init))
+                
+                # Добавляем новые задачи для поддержания пула
+                while len(new_futures_pool) < batch_size and len(X_list) < target_samples:
+                    x_init, p_init = self._generate_random_point()
+                    future = executor.submit(self._calculate_regime, x_init, p_init)
+                    new_futures_pool.append((future, x_init, p_init))
+                
+                futures_pool = new_futures_pool
+                
+                # Прогресс каждые 100 траекторий
+                if info['total_trajectories_processed'] % 100 == 0:
+                    print(f"Сгенерировано {len(X_list)}/{target_samples} образцов "
+                        f"(обработано {info['total_trajectories_processed']} траекторий)")
+        
+        # Обрезаем до target_samples
+        self.X = np.array(X_list[:target_samples])
+        self.y = np.array(y_list[:target_samples])
+        
+        # Обновляем статистику
+        info['total_samples_generated'] = len(self.X)
+        info['target_samples'] = target_samples
+        info['n_jobs_used'] = n_jobs
+        self.info = info
+        
+        print(f"Генерация завершена. Всего образцов: {len(self.X)}")
+        
+        return self.X, self.y, self.info
 
-    while len(X) < target_samples:
-        # Случайные начальные условия и параметры
-        x_init = rng.uniform(
-            [r[0] for r in variables_ranges],
-            [r[1] for r in variables_ranges]
+    def _generate_random_point(self) -> Tuple[np.ndarray, np.ndarray]:
+        """Генерация случайной начальной точки."""
+        x_init = self.rng.uniform(
+            [r[0] for r in self.variables_ranges],
+            [r[1] for r in self.variables_ranges]
         )
-        p_init = rng.uniform(
-            [r[0] for r in parameters_ranges],
-            [r[1] for r in parameters_ranges]
+        p_init = self.rng.uniform(
+            [r[0] for r in self.parameters_ranges],
+            [r[1] for r in self.parameters_ranges]
         )
-        
-        traj_processed += 1
-        
-        # Определение типа аттрактора
-        regime = calculate_dynamic_regime(
-            evolution_operator=evolution_operator,
-            right_part=right_part,
-            state=x_init,
-            params=p_init,
-            dt=dt,
-            n_transient=n_transient,
-            n_attractor=10,
-            secant_plane=secant_plane,
-            secant_plane_derivatives=secant_plane_derivatives,
-            accuracy=accuracy,
-            max_steps=100_000,
-            fixed_point_threshold=fp_threshold,
-            divergence_threshold=div_threshold
-        )
-        
-        # Пропуск неподвижных точек
-        if regime.get("type") == "EP":
-            traj_rejected_ep += 1
-            continue
+        return x_init, p_init
 
-        # Генерация первых steps_per_trajectory шагов
+    def _generate_trajectory_steps(self, x_init: np.ndarray, p_init: np.ndarray,
+                                X_list: list, y_list: list, info: Dict) -> bool:
+        """Генерация шагов траектории и добавление в датасет."""
         x = x_init.copy()
         p = p_init.copy()
         
+        samples_generated = 0
+        samples_rejected = 0
+        
         try:
-            for step in range(steps_per_trajectory):
-                x_next = evolution_operator(x, p, dt)
+            for step in range(self.steps_per_trajectory):
+                x_next = self.evolution_operator(x, p, self.dt)
                 delta = x_next - x
                 
-                X.append(np.concatenate([x, p]))
-                y.append(delta)
+                if (np.any(np.isinf(x_next)) or np.any(np.isnan(x_next)) or 
+                    np.any(np.isinf(delta)) or np.any(np.isnan(delta))):
+                    samples_rejected += 1
+                    x = x_next
+                    continue
+                
+                X_list.append(np.concatenate([x, p]))
+                y_list.append(delta)
+                samples_generated += 1
                 
                 x = x_next
-                
-                # Проверка на расходимость
-                if np.any(np.isnan(x)) or np.any(np.abs(x) > div_threshold):
-                    divergence_trajs_number += 1
-                    break
-                    
-        except Exception:
-            continue
+                                    
+        except Exception as e:
+            # Обновляем статистику ошибок
+            info['trajectory_errors'] = info.get('trajectory_errors', 0) + 1
+            return False
         
-        if traj_processed % 100 == 0:
-            print(f"Generated {len(X)}/{target_samples} samples "
-                  f"(processed {traj_processed} trajectories)")
+        # Обновляем статистику
+        if 'samples_rejected' not in info:
+            info['samples_rejected'] = 0
+            info['samples_generated_per_trajectory'] = []
+        
+        info['samples_rejected'] += samples_rejected
+        info['samples_generated_per_trajectory'].append(samples_generated)
+        
+        # Возвращаем True, если сгенерирован хотя бы один валидный шаг
+        return samples_generated > 0
     
-    X = np.array(X[:target_samples])
-    y = np.array(y[:target_samples])
+    def _init_info(self) -> Dict[str, Any]:
+        """Инициализация словаря статистики."""
+        return {
+            'total_trajectories_processed': 0,
+            'rejected_fixed_points': 0,
+            'divergence_trajs_number': 0,
+            'accepted_trajectories': 0,
+            'total_samples_generated': 0,
+            'target_samples': 0
+        }
     
-    info = {
-        "total_trajectories_processed": traj_processed,
-        "rejected_fixed_points": traj_rejected_ep,
-        "divergence_trajs_number": divergence_trajs_number,
-        "accepted_trajectories": traj_processed - traj_rejected_ep,
-        "total_samples_generated": len(X),
-        "target_samples": target_samples
-    }
+    def _calculate_regime(self, x_init: np.ndarray, p_init: np.ndarray) -> Dict[str, Any]:
+        """Определение типа аттрактора."""
+        return calculate_dynamic_regime(
+            evolution_operator=self.evolution_operator,
+            right_part=self.right_part,
+            state=x_init,
+            params=p_init,
+            dt=self.dt,
+            n_transient=self.n_transient,
+            n_attractor=10,
+            secant_plane=self.secant_plane,
+            secant_plane_derivatives=self.secant_plane_derivatives,
+            accuracy=self.accuracy,
+            max_steps=100_000,
+            fixed_point_threshold=self.fp_threshold,
+            divergence_threshold=self.div_threshold
+        )
+        
+    def save(self, filepath: str, overwrite: bool = False) -> None:
+        """
+        Сохранение датасета и конфигурации в файл.
+        
+        Args:
+            filepath: Путь к файлу (.npz)
+            overwrite: Разрешить перезапись существующего файла
+        """
+        if os.path.exists(filepath) and not overwrite:
+            raise FileExistsError(f"Файл {filepath} уже существует. Используйте overwrite=True")
+        
+        if self.X is None or self.y is None or self.info is None:
+            raise ValueError("Нет данных для сохранения. Сначала запустите generate()")
+        
+        # Создаем директорию, если она не существует
+        directory = os.path.dirname(filepath)
+        if directory and not os.path.exists(directory):
+            os.makedirs(directory, exist_ok=True)
+            print(f"Создана директория: {directory}")
+        
+        # Сохраняем данные и конфигурацию
+        np.savez_compressed(
+            filepath,
+            X=self.X,
+            y=self.y,
+            info=np.array(json.dumps(self.info)),  # Сериализуем dict в строку
+            # Сохраняем конфигурацию (без функций secant_plane и secant_plane_derivatives)
+            config=np.array(json.dumps({
+                'variables_ranges': self.variables_ranges,
+                'parameters_ranges': self.parameters_ranges,
+                'n_transient': self.n_transient,
+                'steps_per_trajectory': self.steps_per_trajectory,
+                'fp_threshold': self.fp_threshold,
+                'div_threshold': self.div_threshold,
+                'accuracy': self.accuracy,
+                'dt': self.dt,
+                'seed': self.seed,
+                'n_var': self.n_var,
+                'n_param': self.n_param,
+                # Сохраняем флаги наличия функций (для информации)
+                'has_secant_plane': self.secant_plane is not None,
+                'has_secant_plane_derivatives': self.secant_plane_derivatives is not None,
+            }))
+        )
+        print(f"Датасет сохранен в {filepath}")
     
-    return X, y, info
+    @classmethod
+    def load(cls, filepath: str, 
+             evolution_operator: Callable, 
+             right_part: Callable,
+             secant_plane: Optional[Callable] = None,
+             secant_plane_derivatives: Optional[Callable] = None) -> 'DynamicSystemDatasetGenerator':
+        """
+        Загрузка датасета и конфигурации из файла.
+        
+        Args:
+            filepath: Путь к файлу (.npz)
+            evolution_operator: Функция эволюции (не сохраняется в файле)
+            right_part: Правая часть ДУ (не сохраняется в файле)
+            secant_plane: Функция секущей плоскости (не сохраняется в файле)
+            secant_plane_derivatives: Функция производных секущей плоскости (не сохраняется в файле)
+            
+        Returns:
+            Экземпляр DynamicSystemDatasetGenerator с загруженными данными
+        """
+        if not os.path.exists(filepath):
+            raise FileNotFoundError(f"Файл {filepath} не найден")
+        
+        data = np.load(filepath, allow_pickle=True)
+        
+        # Восстанавливаем конфигурацию
+        config = json.loads(str(data['config']))
+        
+        # Создаем экземпляр
+        instance = cls(
+            evolution_operator=evolution_operator,
+            right_part=right_part,
+            variables_ranges=config['variables_ranges'],
+            parameters_ranges=config['parameters_ranges'],
+            n_transient=config['n_transient'],
+            steps_per_trajectory=config['steps_per_trajectory'],
+            fp_threshold=config['fp_threshold'],
+            div_threshold=config['div_threshold'],
+            secant_plane=secant_plane,
+            secant_plane_derivatives=secant_plane_derivatives,
+            accuracy=config['accuracy'],
+            dt=config['dt'],
+            seed=config['seed']
+        )
+        
+        # Восстанавливаем данные
+        instance.X = data['X']
+        instance.y = data['y']
+        instance.info = json.loads(str(data['info']))
+        
+        # Предупреждение, если в сохраненных данных были функции, но при загрузке не переданы
+        if config.get('has_secant_plane', False) and secant_plane is None:
+            warnings.warn("В сохраненном датасете использовалась secant_plane, но при загрузке передана None.")
+        if config.get('has_secant_plane_derivatives', False) and secant_plane_derivatives is None:
+            warnings.warn("В сохраненном датасете использовалась secant_plane_derivatives, но при загрузке передана None.")
+        
+        print(f"Датасет загружен из {filepath}. Образцов: {len(instance.X)}")
+        
+        return instance
+    
+    def get_config_summary(self) -> Dict[str, Any]:
+        """Возвращает сводку по конфигурации."""
+        return {
+            'phase_space_dim': self.n_var,
+            'parameter_dim': self.n_param,
+            'variables_ranges': self.variables_ranges,
+            'parameters_ranges': self.parameters_ranges,
+            'steps_per_trajectory': self.steps_per_trajectory,
+            'transient_steps': self.n_transient,
+            'integration_dt': self.dt,
+            'seed': self.seed,
+            'has_secant_plane': self.secant_plane is not None,
+            'has_secant_plane_derivatives': self.secant_plane_derivatives is not None
+        }
