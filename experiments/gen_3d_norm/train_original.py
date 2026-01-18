@@ -20,6 +20,7 @@ X, y, info = generate_pairs_dataset_filtered(
     accuracy=1e-4,
     dt=0.01,
     seed=52,
+    n_jobs=50
 )
 
 print(info)
