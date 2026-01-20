@@ -4,7 +4,12 @@ import numpy as np
 from tqdm import tqdm
 from pathlib import Path
 import pytorch_lightning as pl
-from pytorch_lightning.callbacks import ModelCheckpoint, TQDMProgressBar
+from pytorch_lightning.callbacks import (
+    ModelCheckpoint, 
+    TQDMProgressBar,
+    EarlyStopping,
+    LearningRateMonitor
+)
 from pytorch_lightning.callbacks import Callback
 import json
 from datetime import datetime
@@ -18,7 +23,9 @@ class HistoryCallback(Callback):
         self.history = {
             'train_loss': [],
             'val_loss': [],
-            'epoch': []
+            'epoch': [],
+            'best_val_loss': float('inf'),
+            'best_epoch': -1
         }
         self.last_val_loss = None
     
@@ -56,6 +63,11 @@ class HistoryCallback(Callback):
         
         if val_loss is not None:
             self.history['val_loss'].append(val_loss)
+            
+            # Отслеживаем лучшую модель
+            if val_loss < self.history['best_val_loss']:
+                self.history['best_val_loss'] = val_loss
+                self.history['best_epoch'] = epoch
         elif self.last_val_loss is not None:
             self.history['val_loss'].append(self.last_val_loss)
         
@@ -130,20 +142,54 @@ class NeuroMapOriginal(pl.LightningModule):
         return loss
     
     def configure_optimizers(self):
-        return torch.optim.Adam(self.parameters(), lr=self.lr)
+        optimizer = torch.optim.Adam(self.parameters(), lr=self.lr)
+        
+        # Добавляем scheduler если указан в гиперпараметрах
+        if hasattr(self.hparams, 'lr_scheduler') and self.hparams.lr_scheduler:
+            scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
+                optimizer,
+                mode='min',
+                factor=self.hparams.lr_scheduler_factor,
+                patience=self.hparams.lr_scheduler_patience,
+                verbose=True
+            )
+            return {
+                'optimizer': optimizer,
+                'lr_scheduler': {
+                    'scheduler': scheduler,
+                    'monitor': 'val_loss',
+                    'interval': 'epoch',
+                    'frequency': 1
+                }
+            }
+        return optimizer
     
     def fit(self, X, y, epochs=1000, lr=1e-3, batch_size=64, val_split=0.1,
             val_every=10, log_every=100, verbose=True, num_workers=0, 
-            checkpoint_dir=None, history_path=None, ckpt_path=None):
+            checkpoint_dir=None, history_path=None, ckpt_path=None,
+            gradient_clip_val=None, gradient_clip_algorithm='norm',
+            early_stopping_patience=None, lr_scheduler=None,
+            lr_scheduler_patience=10, lr_scheduler_factor=0.1):
         """
         Обучение модели (совместимость с предыдущим API)
         
         Args:
-            ckpt_path: путь к чекпоинту для продолжения обучения. Если None и указан checkpoint_dir,
-                      будет автоматически найден последний чекпоинт.
+            ... [существующие аргументы] ...
+            gradient_clip_val (float, optional): Значение для клиппирования градиентов. По умолчанию None.
+            gradient_clip_algorithm (str, optional): Алгоритм клиппирования ('norm' или 'value'). По умолчанию 'norm'.
+            early_stopping_patience (int, optional): Количество эпох без улучшения для ранней остановки. По умолчанию None.
+            lr_scheduler (bool, optional): Использовать scheduler обучения. По умолчанию False.
+            lr_scheduler_patience (int): Терпение для ReduceLROnPlateau. По умолчанию 10.
+            lr_scheduler_factor (float): Коэффициент уменьшения LR. По умолчанию 0.1.
         """
         self.lr = lr
         self._compute_statistics(X, y)
+        
+        # Сохраняем параметры scheduler в гиперпараметры для configure_optimizers
+        if lr_scheduler:
+            self.hparams.lr_scheduler = True
+            self.hparams.lr_scheduler_patience = lr_scheduler_patience
+            self.hparams.lr_scheduler_factor = lr_scheduler_factor
         
         # Автоматический поиск последнего чекпоинта
         if ckpt_path is None and checkpoint_dir is not None:
@@ -182,18 +228,33 @@ class NeuroMapOriginal(pl.LightningModule):
         
         history_callback = HistoryCallback()
         callbacks = [history_callback, TQDMProgressBar(refresh_rate=1 if verbose else 0)]
+        
+        # Добавляем LearningRateMonitor если используется scheduler
+        if lr_scheduler:
+            callbacks.append(LearningRateMonitor(logging_interval='epoch'))
+        
         checkpoint_callback = None
         if val_split > 0:
             checkpoint_kwargs = {
                 'monitor': 'val_loss',
                 'mode': 'min',
-                'save_top_k': 1,
-                'verbose': verbose
+                'save_top_k': 3,  # Сохраняем последние 3 лучших чекпоинта
+                'verbose': verbose,
+                'save_last': True  # Всегда сохраняем последнюю модель
             }
             if checkpoint_dir is not None:
                 checkpoint_kwargs['dirpath'] = checkpoint_dir
             checkpoint_callback = ModelCheckpoint(**checkpoint_kwargs)
             callbacks.append(checkpoint_callback)
+        
+        # Добавляем EarlyStopping если задано терпение
+        if early_stopping_patience is not None and val_split > 0:
+            callbacks.append(EarlyStopping(
+                monitor='val_loss',
+                patience=early_stopping_patience,
+                mode='min',
+                verbose=verbose
+            ))
         
         log_every_n_steps = log_every if log_every > 0 else 50
         
@@ -203,7 +264,10 @@ class NeuroMapOriginal(pl.LightningModule):
             enable_progress_bar=verbose,
             log_every_n_steps=log_every_n_steps,
             check_val_every_n_epoch=val_every if val_split > 0 else 1,
-            logger=False
+            logger=False,
+            gradient_clip_val=gradient_clip_val,
+            gradient_clip_algorithm=gradient_clip_algorithm,
+            enable_checkpointing=checkpoint_dir is not None  # Отключаем чекпоинты если не указан путь
         )
         
         trainer.fit(self, train_dataloader, val_dataloader, ckpt_path=ckpt_path)
@@ -219,10 +283,18 @@ class NeuroMapOriginal(pl.LightningModule):
         self.training_history = history_callback.get_history()
         
         if checkpoint_callback is not None and checkpoint_callback.best_model_score is not None:
-            self.logger_py.info(f"Готово. Лучшая валидация: {checkpoint_callback.best_model_score:.6f}")
+            self.logger_py.info(
+                f"Готово. Лучшая валидация: {checkpoint_callback.best_model_score:.6f} "
+                f"(эпоха {checkpoint_callback.best_model_path.split('epoch=')[-1].split('-')[0]})"
+            )
         else:
             self.logger_py.info("Готово.")
         
+        # Загружаем лучшую модель если есть чекпоинт
+        if checkpoint_callback is not None and checkpoint_callback.best_model_path:
+            self.logger_py.info(f"Загружаем лучшую модель из {checkpoint_callback.best_model_path}")
+            self.load_from_checkpoint(checkpoint_callback.best_model_path)
+    
     def predict(self, X):
         """Предсказание (возвращает numpy на CPU)"""
         self.eval()
@@ -370,8 +442,13 @@ class NeuroMapOriginal(pl.LightningModule):
             'lr': float(self.lr)
         }
         
+        # Сохраняем текущие значения буферов статистики
+        state_dict = self.state_dict()
+        buffers = {name: buffer for name, buffer in self.named_buffers()}
+        
         checkpoint = {
-            'state_dict': self.state_dict(),
+            'state_dict': state_dict,
+            'buffers': buffers,  # Явно сохраняем буферы
             'hyper_parameters': hparams,
             '_format': 'neuromap_v1.0',
             'torch_version': torch.__version__,
