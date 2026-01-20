@@ -149,8 +149,7 @@ class NeuroMapFixed(pl.LightningModule):
                 optimizer,
                 mode='min',
                 factor=self.hparams.lr_scheduler_factor,
-                patience=self.hparams.lr_scheduler_patience,
-                verbose=True
+                patience=self.hparams.lr_scheduler_patience
             )
             return {
                 'optimizer': optimizer,
