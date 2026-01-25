@@ -13,9 +13,9 @@ X, y = generate_pairs_dataset(
     evolution_operator=generator_3d_rk4,
     variables_ranges=[(-10, 10), (-50, 50), (-20, 20)],
     parameters_ranges=[(-1, 7), (1/23, 1/18), (5, 8), (0.02, 0.02)], # lambda_, beta, w0, k 
-    num_of_traj=1_000_000,
+    num_of_traj=200_000,
     num_in_traj=5,
-    dt=0.01,
+    dt=0.001,
     seed=52
 )
 

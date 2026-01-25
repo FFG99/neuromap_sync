@@ -263,7 +263,7 @@ class NeuroMapOriginal(pl.LightningModule):
             enable_progress_bar=verbose,
             log_every_n_steps=log_every_n_steps,
             check_val_every_n_epoch=val_every if val_split > 0 else 1,
-            logger=False,
+            logger=True,
             gradient_clip_val=gradient_clip_val,
             gradient_clip_algorithm=gradient_clip_algorithm,
             enable_checkpointing=checkpoint_dir is not None  # Отключаем чекпоинты если не указан путь
