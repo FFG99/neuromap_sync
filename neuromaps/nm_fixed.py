@@ -260,7 +260,7 @@ class NeuroMapFixed(pl.LightningModule):
             enable_progress_bar=verbose,
             log_every_n_steps=log_every_n_steps,
             check_val_every_n_epoch=val_every if val_split > 0 else 1,
-            logger=False,
+            logger=True,
             gradient_clip_val=gradient_clip_val,
             gradient_clip_algorithm=gradient_clip_algorithm,
             enable_checkpointing=checkpoint_dir is not None  # Отключаем чекпоинты если не указан путь
@@ -289,7 +289,18 @@ class NeuroMapFixed(pl.LightningModule):
         # Загружаем лучшую модель если есть чекпоинт
         if checkpoint_callback is not None and checkpoint_callback.best_model_path:
             self.logger_py.info(f"Загружаем лучшую модель из {checkpoint_callback.best_model_path}")
-            self.load_from_checkpoint(checkpoint_callback.best_model_path, map_location=self.device)
+            checkpoint = torch.load(checkpoint_callback.best_model_path, map_location=self.device)
+            state_dict = checkpoint['state_dict']
+            # Удаляем префикс 'model.' если он есть
+            from collections import OrderedDict
+            new_state_dict = OrderedDict()
+            for k, v in state_dict.items():
+                if k.startswith('model.'):
+                    new_state_dict[k[6:]] = v
+                else:
+                    new_state_dict[k] = v
+            self.load_state_dict(new_state_dict, strict=True)
+
     
     def predict(self, X):
         """Предсказание (возвращает numpy на CPU)"""

@@ -164,22 +164,21 @@ class NeuroMapOriginal(pl.LightningModule):
         return optimizer
     
     def fit(self, X, y, epochs=1000, lr=1e-3, batch_size=64, val_split=0.1,
-            val_every=10, log_every=100, verbose=True, num_workers=0, 
-            checkpoint_dir=None, history_path=None, ckpt_path=None,
-            gradient_clip_val=None, gradient_clip_algorithm='norm',
-            early_stopping_patience=None, lr_scheduler=None,
-            lr_scheduler_patience=10, lr_scheduler_factor=0.1):
+        val_every=10, log_every=100, verbose=True, num_workers=0, 
+        checkpoint_dir=None, history_path=None, ckpt_path=None,
+        gradient_clip_val=None, gradient_clip_algorithm='norm',
+        early_stopping_patience=None, lr_scheduler=None,
+        lr_scheduler_patience=10, lr_scheduler_factor=0.1):
         """
         Обучение модели (совместимость с предыдущим API)
         
         Args:
-            ... [существующие аргументы] ...
-            gradient_clip_val (float, optional): Значение для клиппирования градиентов. По умолчанию None.
-            gradient_clip_algorithm (str, optional): Алгоритм клиппирования ('norm' или 'value'). По умолчанию 'norm'.
-            early_stopping_patience (int, optional): Количество эпох без улучшения для ранней остановки. По умолчанию None.
-            lr_scheduler (bool, optional): Использовать scheduler обучения. По умолчанию False.
-            lr_scheduler_patience (int): Терпение для ReduceLROnPlateau. По умолчанию 10.
-            lr_scheduler_factor (float): Коэффициент уменьшения LR. По умолчанию 0.1.
+        gradient_clip_val (float, optional): Значение для клиппирования градиентов. По умолчанию None.
+        gradient_clip_algorithm (str, optional): Алгоритм клиппирования ('norm' или 'value'). По умолчанию 'norm'.
+        early_stopping_patience (int, optional): Количество эпох без улучшения для ранней остановки. По умолчанию None.
+        lr_scheduler (bool, optional): Использовать scheduler обучения. По умолчанию False.
+        lr_scheduler_patience (int): Терпение для ReduceLROnPlateau. По умолчанию 10.
+        lr_scheduler_factor (float): Коэффициент уменьшения LR. По умолчанию 0.1.
         """
         self.lr = lr
         self._compute_statistics(X, y)
@@ -286,13 +285,21 @@ class NeuroMapOriginal(pl.LightningModule):
                 f"Готово. Лучшая валидация: {checkpoint_callback.best_model_score:.6f} "
                 f"(эпоха {checkpoint_callback.best_model_path.split('epoch=')[-1].split('-')[0]})"
             )
+            
+            if checkpoint_callback.best_model_path:
+                self.logger_py.info(f"Загружаем лучшую модель из {checkpoint_callback.best_model_path}")
+                checkpoint = torch.load(checkpoint_callback.best_model_path, map_location=self.device)
+                state_dict = checkpoint['state_dict']
+                from collections import OrderedDict
+                new_state_dict = OrderedDict()
+                for k, v in state_dict.items():
+                    if k.startswith('model.'):
+                        new_state_dict[k[6:]] = v  # удаляем 'model.'
+                    else:
+                        new_state_dict[k] = v
+                self.load_state_dict(new_state_dict, strict=True)
         else:
             self.logger_py.info("Готово.")
-        
-        # Загружаем лучшую модель если есть чекпоинт
-        if checkpoint_callback is not None and checkpoint_callback.best_model_path:
-            self.logger_py.info(f"Загружаем лучшую модель из {checkpoint_callback.best_model_path}")
-            self.load_from_checkpoint(checkpoint_callback.best_model_path)
     
     def predict(self, X):
         """Предсказание (возвращает numpy на CPU)"""
