@@ -24,7 +24,7 @@ history_path = "experiments/gen_3d_norm/checkpoints/fixed/history.json"
 Path(checkpoint_dir).mkdir(parents=True, exist_ok=True)
 
 print("Подготовка модели...")
-model = NeuroMapFixed(n_var=3, n_param=4, hidden_size=256, dt=0.01, lr=1e-4)
+model = NeuroMapFixed(n_var=3, n_param=4, hidden_size=256, dt=0.001, lr=1e-4)
 
 print("\n=== Начало обучения ===")
 model.fit(
