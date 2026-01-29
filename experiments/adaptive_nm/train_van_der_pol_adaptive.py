@@ -35,9 +35,9 @@ else:
         print("Модель загружена, продолжаем обучение...")
     else:
         print("Создаем новую модель")
-        model = NeuroMapAdaptiveScale(n_var=2, n_param=2, hidden_size=256, dt=0.01)
+        model = NeuroMapAdaptiveScale(n_var=2, n_param=2, hidden_size=256)
 
-model.fit(X, y, epochs=1000, lr=5e-4, batch_size=512, val_split=0.2, 
+model.fit(X, y, epochs=1000, lr=5e-4, batch_size=512, val_split=0.2,
           checkpoint_dir=checkpoint_dir,
           history_path="experiments/adaptive_nm/checkpoints/adaptive/history.json")
 
