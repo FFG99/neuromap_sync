@@ -340,30 +340,40 @@ class NeuroMapFixed(pl.LightningModule):
         return np.concatenate(trajectory, axis=0)
     
     def _compute_statistics(self, X, y):
-        """Вычисление статистики с валидацией"""
+        """
+        Вычисление статистики с валидацией.
+        Теперь поддерживается как 2‑D, так и 3‑D входы (N, T, …).
+        """
+        # Если массивы 3‑D – «расплющиваем» по N и T
+        if X.ndim == 3:
+            X = X.reshape(-1, X.shape[-1])   # (N*T, n_var+n_param)
+        if y.ndim == 3:
+            y = y.reshape(-1, y.shape[-1])   # (N*T, n_var)
+
         u = X[:, :self.n_var]
         p = X[:, self.n_var:self.n_var+self.n_param]
         d = y
-        
+
         if np.any(np.std(d, axis=0) < 1e-8):
             self.logger_py.warning("Обнаружены константные приращения (std < 1e-8)")
-        
+
         def update_stat(buffer, data, is_std=False):
             tensor = torch.tensor(
-                np.mean(data, axis=0, keepdims=True) if not is_std else np.std(data, axis=0, keepdims=True), 
+                np.mean(data, axis=0, keepdims=True) if not is_std else
+                np.std(data, axis=0, keepdims=True),
                 dtype=torch.float32
             )
             buffer.copy_(tensor)
             if is_std:
                 buffer.clamp_(min=1e-6)
-        
+
         update_stat(self.mu_u, u)
         update_stat(self.su, u, is_std=True)
         update_stat(self.mu_p, p)
         update_stat(self.sp, p, is_std=True)
         update_stat(self.mu_d, d)
         update_stat(self.sd, d, is_std=True)
-    
+
     @classmethod
     def load(cls, path, device=None):
         """
@@ -663,3 +673,202 @@ class NeuroMapFixed(pl.LightningModule):
         if batch_size == 1:
             return multipliers[0]
         return multipliers
+
+    def recursive_training_step(self, batch, batch_idx):
+        """
+        training_step для рекурсивного обучения.
+        В каждом батче передаётся последовательность длиной seq_len.
+        """
+        X_seq, y_seq = batch                # (B, T, n_var+n_param) , (B, T, n_var)
+        u_seq  = X_seq[:, :, :self.n_var]   # (B, T, n_var)
+        p_seq  = X_seq[:, :, self.n_var:self.n_var+self.n_param]  # (B, T, n_param)
+
+        loss = 0.0
+        u_curr = u_seq[:, 0, :]             # стартовое состояние (B, n_var)
+
+        for t in range(self.hparams.seq_len):
+            p_t   = p_seq[:, t, :]          # (B, n_param)
+            pred_d = self.forward(u_curr, p_t)   # (B, n_var)
+
+            loss += self.criterion(pred_d, y_seq[:, t, :])  # сравниваем с приращением
+            u_curr = u_curr + pred_d                       # рекурсивное обновление
+
+        loss /= self.hparams.seq_len                     # усреднённый loss
+        self.log('train_loss', loss, on_step=True,
+                 on_epoch=True, prog_bar=True)
+        return loss
+
+    def recursive_validation_step(self, batch, batch_idx):
+        """
+        validation_step для рекурсивного обучения.
+        Считается тот же loss, но без on_step‑логирования.
+        """
+        X_seq, y_seq = batch
+        u_seq  = X_seq[:, :, :self.n_var]
+        p_seq  = X_seq[:, :, self.n_var:self.n_var+self.n_param]
+
+        loss = 0.0
+        u_curr = u_seq[:, 0, :]
+
+        for t in range(self.hparams.seq_len):
+            p_t   = p_seq[:, t, :]
+            pred_d = self.forward(u_curr, p_t)
+            loss += self.criterion(pred_d, y_seq[:, t, :])
+            u_curr = u_curr + pred_d
+
+        loss /= self.hparams.seq_len
+        self.log('val_loss', loss, on_step=False,
+                 on_epoch=True, prog_bar=True)
+        return loss
+
+    def fit_recursive(
+        self,
+        X, y,
+        epochs=1500,
+        lr=5e-3,
+        batch_size=512,
+        val_split=0.2,
+        val_every=10,
+        log_every=50,
+        checkpoint_dir=None,
+        history_path=None,
+        gradient_clip_val=None,
+        gradient_clip_algorithm='norm',
+        early_stopping_patience=None
+    ):
+        """
+        Рекурсивное обучение: каждый батч содержит целую траекторию.
+
+        Args:
+            X, y   – 3‑D numpy/torch тензоры (N, T, ...)
+            epochs, lr, batch_size и др. – те же параметры, что в оригинальном `fit`
+            checkpoint_dir   – каталог для чекпоинтов
+            history_path     – путь к JSON‑файлу с историей (опционально)
+        """
+        if X.ndim != 3 or y.ndim != 3:
+            raise ValueError("X и y должны быть 3‑мерными: (N, T, …)")
+        self.hparams.seq_len = X.shape[1]
+
+        # Сохраняем оригинальные шаги обучения, чтобы вернуть их после тренировки
+        orig_train_step = self.training_step
+        orig_val_step   = self.validation_step
+
+        # Переключаемся на рекурсивные шаги обучения по траектории
+        self.training_step = self.recursive_training_step
+        self.validation_step = self.recursive_validation_step
+
+        self.lr = lr
+        self._compute_statistics(X, y)
+
+        ckpt_path = None
+        if ckpt_path is None and checkpoint_dir is not None:
+            checkpoint_dir_path = Path(checkpoint_dir)
+            if checkpoint_dir_path.exists():
+                ckpt_files = list(checkpoint_dir_path.glob("epoch=*.ckpt"))
+                if ckpt_files:
+                    ckpt_path = str(max(ckpt_files, key=lambda p: p.stat().st_mtime))
+                    self.logger_py.info(f"Найден чекпоинт для продолжения: {ckpt_path}")
+        N = len(X)
+        n_train = int(N * (1 - val_split))
+        X_train, X_val = X[:n_train], X[n_train:]
+        y_train, y_val = y[:n_train], y[n_train:]
+
+        self.logger_py.info(f"Тренировка: {len(X_train):,} | Валидация: {len(X_val):,}")
+
+        X_train_tensor = torch.tensor(X_train, dtype=torch.float32)
+        y_train_tensor = torch.tensor(y_train, dtype=torch.float32)
+
+        train_dataset = torch.utils.data.TensorDataset(X_train_tensor, y_train_tensor)
+        train_dataloader = torch.utils.data.DataLoader(
+            train_dataset, batch_size=batch_size, shuffle=True,
+            num_workers=0
+        )
+
+        val_dataloader = None
+        if val_split > 0:
+            X_val_tensor = torch.tensor(X_val, dtype=torch.float32)
+            y_val_tensor = torch.tensor(y_val, dtype=torch.float32)
+            val_dataset = torch.utils.data.TensorDataset(X_val_tensor, y_val_tensor)
+            val_dataloader = torch.utils.data.DataLoader(
+                val_dataset, batch_size=batch_size, shuffle=False,
+                num_workers=0
+            )
+
+        history_callback = HistoryCallback()
+        callbacks = [history_callback,
+                     TQDMProgressBar(refresh_rate=1 if log_every > 0 else 0)]
+
+        checkpoint_callback = None
+        if val_split > 0:
+            ckpt_kwargs = {
+                'monitor': 'val_loss',
+                'mode': 'min',
+                'save_top_k': 3,
+                'verbose': log_every > 0,
+                'save_last': True
+            }
+            if checkpoint_dir is not None:
+                ckpt_kwargs['dirpath'] = checkpoint_dir
+            checkpoint_callback = ModelCheckpoint(**ckpt_kwargs)
+            callbacks.append(checkpoint_callback)
+
+        if early_stopping_patience is not None and val_split > 0:
+            callbacks.append(EarlyStopping(
+                monitor='val_loss',
+                patience=early_stopping_patience,
+                mode='min',
+                verbose=log_every > 0
+            ))
+
+        log_every_n_steps = log_every if log_every > 0 else 50
+
+        trainer = pl.Trainer(
+            max_epochs=epochs,
+            callbacks=callbacks,
+            enable_progress_bar=(log_every > 0),
+            log_every_n_steps=log_every_n_steps,
+            check_val_every_n_epoch=val_every if val_split > 0 else 1,
+            logger=True,
+            gradient_clip_val=gradient_clip_val,
+            gradient_clip_algorithm=gradient_clip_algorithm,
+            enable_checkpointing=(checkpoint_dir is not None)
+        )
+
+        trainer.fit(self, train_dataloader, val_dataloader, ckpt_path=ckpt_path)
+
+        if history_path is not None:
+            hist = history_callback.get_history()
+            hp = Path(history_path)
+            hp.parent.mkdir(parents=True, exist_ok=True)
+            with open(hp, 'w', encoding='utf-8') as f:
+                json.dump(hist, f, indent=2, ensure_ascii=False)
+            self.logger_py.info(f"История обучения сохранена в {hp}")
+
+        self.training_history = history_callback.get_history()
+
+        if checkpoint_callback is not None and checkpoint_callback.best_model_score is not None:
+            self.logger_py.info(
+                f"Готово. Лучшая валидация: {checkpoint_callback.best_model_score:.6f} "
+                f"(эпоха {checkpoint_callback.best_model_path.split('epoch=')[-1].split('-')[0]})"
+            )
+        else:
+            self.logger_py.info("Готово.")
+
+        # Загружаем лучшую модель, если она есть
+        if checkpoint_callback is not None and checkpoint_callback.best_model_path:
+            self.logger_py.info(f"Загружаем лучшую модель из {checkpoint_callback.best_model_path}")
+            ckpt = torch.load(checkpoint_callback.best_model_path, map_location=self.device)
+            state_dict = ckpt['state_dict']
+            # убираем префикс 'model.' (если есть)
+            from collections import OrderedDict
+            new_state = OrderedDict()
+            for k, v in state_dict.items():
+                if k.startswith('model.'):
+                    new_state[k[6:]] = v
+                else:
+                    new_state[k] = v
+            self.load_state_dict(new_state, strict=True)
+
+        # Возвращаем исходные шаги обучения (по одной точке)
+        self.training_step = orig_train_step
+        self.validation_step = orig_val_step
