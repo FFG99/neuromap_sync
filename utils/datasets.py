@@ -418,3 +418,40 @@ class DynamicSystemDatasetGenerator:
             'has_secant_plane': self.secant_plane is not None,
             'has_secant_plane_derivatives': self.secant_plane_derivatives is not None
         }
+
+
+def generate_sequence_dataset(
+    evolution_operator, variables_ranges, parameters_ranges,
+    num_of_traj=200_000, seq_len=10, dt=0.01, seed=None
+):
+    """
+    Генерируем список траекторий длиной seq_len+1.
+    Возвращаем X: (N, seq_len, n_var + n_param), y: (N, seq_len, n_var)
+    где y = u_{t+1} - u_t (приращения).
+    """
+    rng = np.random.default_rng(seed)
+    X_list, y_list = [], []
+
+    for _ in range(num_of_traj):
+        # случайный стартовый u и p
+        u0 = rng.uniform(*zip(*variables_ranges))
+        p  = rng.uniform(*zip(*parameters_ranges))
+
+        # симулируем seq_len+1 шагов
+        us = [u0]
+        for _ in range(seq_len):
+            u_next = evolution_operator(us[-1], p, dt=dt)
+            us.append(u_next)
+
+        us = np.array(us)                     # shape (seq_len+1, n_var)
+        du  = us[1:] - us[:-1]                # shape (seq_len, n_var)
+
+        X_seq = np.concatenate([us[:-1], np.tile(p, (seq_len, 1))], axis=1)
+        # X_seq shape: (seq_len, n_var + n_param)
+
+        X_list.append(X_seq)
+        y_list.append(du)                     # shape (seq_len, n_var)
+
+    X = np.stack(X_list, axis=0)  # (N, seq_len, n_var + n_param)
+    y = np.stack(y_list, axis=0)  # (N, seq_len, n_var)
+    return X, y
