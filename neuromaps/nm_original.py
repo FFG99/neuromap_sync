@@ -81,13 +81,14 @@ class HistoryCallback(Callback):
 class NeuroMapOriginal(pl.LightningModule):
     """Модель С ОШИБКОЙ из статьи: денормализация по u вместо d"""
     
-    def __init__(self, n_var, n_param, hidden_size=50, dt=0.01, lr=1e-3):
+    def __init__(self, n_var, n_param, hidden_size=50, num_hidden_layers=1, dt=0.01, lr=1e-3):
         super().__init__()
-        self.save_hyperparameters('n_var', 'n_param', 'hidden_size', 'dt', 'lr')
+        self.save_hyperparameters('n_var', 'n_param', 'hidden_size', 'num_hidden_layers', 'dt', 'lr')
         
         self.n_var = n_var
         self.n_param = n_param
         self.hidden_size = hidden_size
+        self.num_hidden_layers = num_hidden_layers
         self.dt = dt
         self.lr = lr
         
@@ -100,9 +101,18 @@ class NeuroMapOriginal(pl.LightningModule):
         self.register_buffer('sp', torch.ones(1, n_param))
         # mu_d и sd УДАЛЕНЫ - их нет в статье
         
-        self.hidden = nn.Linear(n_var + n_param, hidden_size)
         self.activation = nn.Tanh()
-        self.output = nn.Linear(hidden_size, n_var)
+        if num_hidden_layers == 1:
+            self.hidden = nn.Linear(n_var + n_param, hidden_size)
+            self.output = nn.Linear(hidden_size, n_var)
+            self.hidden_layers = None
+        else:
+            self.hidden = None
+            layers = [nn.Linear(n_var + n_param, hidden_size)]
+            for _ in range(num_hidden_layers - 1):
+                layers.append(nn.Linear(hidden_size, hidden_size))
+            self.hidden_layers = nn.ModuleList(layers)
+            self.output = nn.Linear(hidden_size, n_var)
         
         self.criterion = nn.MSELoss()
     
@@ -112,7 +122,12 @@ class NeuroMapOriginal(pl.LightningModule):
         p_norm = (p - self.mu_p) / self.sp
         
         z = torch.cat([u_norm, p_norm], dim=1)
-        h = self.activation(self.hidden(z))
+        if self.num_hidden_layers == 1:
+            h = self.activation(self.hidden(z))
+        else:
+            h = z
+            for layer in self.hidden_layers:
+                h = self.activation(layer(h))
         g = self.output(h)
         
         # === Используем статистику u для денормализации d ===
@@ -395,7 +410,7 @@ class NeuroMapOriginal(pl.LightningModule):
                 raise ValueError(
                     f"Отсутствуют обязательные гиперпараметры: {missing}"
                 )
-            
+            hparams.setdefault('num_hidden_layers', 1)
             model = cls(**hparams)
             try:
                 model.load_state_dict(checkpoint['state_dict'], strict=True)
@@ -444,6 +459,7 @@ class NeuroMapOriginal(pl.LightningModule):
             'n_var': int(self.n_var),
             'n_param': int(self.n_param),
             'hidden_size': int(self.hidden_size),
+            'num_hidden_layers': int(self.num_hidden_layers),
             'dt': float(self.dt),
             'lr': float(self.lr)
         }
@@ -470,6 +486,18 @@ class NeuroMapOriginal(pl.LightningModule):
                 json.dump(self.training_history, f, indent=2)
         
         return path
+
+    def _forward_hidden_activations(self, z):
+        """Возвращает список активаций скрытых слоёв (после tanh) для вычисления якобиана."""
+        if self.num_hidden_layers == 1:
+            h = self.activation(self.hidden(z))
+            return [h]
+        activations = []
+        h = z
+        for layer in self.hidden_layers:
+            h = self.activation(layer(h))
+            activations.append(h)
+        return activations
 
     def compute_d_and_jacobian(self, u, p):
         """
@@ -499,26 +527,30 @@ class NeuroMapOriginal(pl.LightningModule):
         p_norm = (p_tensor - self.mu_p) / self.sp
         
         z = torch.cat([u_norm, p_norm], dim=1)
-        
-        h_linear = self.hidden(z)
-        h_n = self.activation(h_linear)
-        g = self.output(h_n)
+        activations = self._forward_hidden_activations(z)
+        g = self.output(activations[-1])
         
         # d = dt * (g * su + mu_u) — ошибочная формула
         d = self.dt * (g * self.su + self.mu_u)
         
-        # Якобиан: J_d = A0 @ H_n @ A1
-        h_derivative = 1 - h_n**2
-        
-        W_hidden = self.hidden.weight
-        W_u = W_hidden[:, :self.n_var]
-        W_output = self.output.weight
-        
-        A0 = W_u.T / self.su.T
-        A1 = W_output.T * self.su * self.dt  # su вместо sd
-        H_n = torch.diag(h_derivative.squeeze())
-        
-        J_d = A0 @ H_n @ A1
+        # Якобиан: цепочка по слоям
+        if self.num_hidden_layers == 1:
+            h_derivative = 1 - activations[0]**2
+            W_hidden = self.hidden.weight
+            W_u = W_hidden[:, :self.n_var]
+            W_output = self.output.weight
+            A0 = W_u.T / self.su.T
+            A1 = W_output.T * self.su * self.dt
+            H_n = torch.diag(h_derivative.squeeze())
+            J_d = A0 @ H_n @ A1
+        else:
+            # d(h_0)/du = diag(1-h_0^2) @ W0[:, :n_var] / su
+            d_h_du = torch.diag((1 - activations[0]**2).squeeze()) @ self.hidden_layers[0].weight[:, :self.n_var] / self.su.squeeze()
+            for l in range(1, self.num_hidden_layers):
+                d_h_du = torch.diag((1 - activations[l]**2).squeeze()) @ self.hidden_layers[l].weight @ d_h_du
+            # dg/du = W_output @ d_h_du, J_d = dt * diag(su) @ dg/du
+            dg_du = self.output.weight @ d_h_du
+            J_d = self.dt * (torch.diag(self.su.squeeze()) @ dg_du)
         
         return d.squeeze().cpu().detach().numpy(), J_d.cpu().detach().numpy()
 
@@ -627,26 +659,28 @@ class NeuroMapOriginal(pl.LightningModule):
         p_norm = (p_tensor - self.mu_p) / self.sp
         
         z = torch.cat([u_norm, p_norm], dim=1)
-        
-        h_linear = self.hidden(z)
-        h_n = self.activation(h_linear)
-        
-        h_derivative = 1 - h_n**2
-        
-        W_hidden = self.hidden.weight
-        W_u = W_hidden[:, :self.n_var]
-        W_output = self.output.weight
-        
-        A0 = W_u.T / self.su.T
-        A1 = W_output.T * self.su * self.dt  # su вместо sd
+        activations = self._forward_hidden_activations(z)
         
         I = torch.eye(self.n_var, device=self.device)
-        
         multipliers = []
         
         for i in range(batch_size):
-            H_n_i = torch.diag(h_derivative[i])
-            J_n = I + A0 @ H_n_i @ A1
+            if self.num_hidden_layers == 1:
+                h_derivative = 1 - activations[0][i]**2
+                W_hidden = self.hidden.weight
+                W_u = W_hidden[:, :self.n_var]
+                W_output = self.output.weight
+                A0 = W_u.T / self.su.T
+                A1 = W_output.T * self.su * self.dt
+                H_n_i = torch.diag(h_derivative)
+                J_d = A0 @ H_n_i @ A1
+            else:
+                d_h_du = torch.diag((1 - activations[0][i]**2)) @ self.hidden_layers[0].weight[:, :self.n_var] / self.su.squeeze()
+                for l in range(1, self.num_hidden_layers):
+                    d_h_du = torch.diag((1 - activations[l][i]**2)) @ self.hidden_layers[l].weight @ d_h_du
+                dg_du = self.output.weight @ d_h_du
+                J_d = self.dt * (torch.diag(self.su.squeeze()) @ dg_du)
+            J_n = I + J_d
             eigenvalues = torch.linalg.eigvals(J_n)
             multipliers.append(eigenvalues.cpu().detach().numpy())
         
