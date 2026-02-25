@@ -8,6 +8,84 @@ import warnings
 from .trajectories import calculate_dynamic_regime
 
 
+def generate_pairs_dataset_finite(evolution_operator,
+                                  variables_ranges,
+                                  parameters_ranges,
+                                  num_of_traj,
+                                  num_in_traj,
+                                  dt,
+                                  seed=52,
+                                  max_attempts_factor=10):
+    """
+    Генерация датасета: X = [u, p], y = Δu.
+    Траектории, в которых появляются NaN или Inf, отбрасываются полностью
+    и заменяются новыми, пока не наберётся нужное количество валидных траекторий.
+
+    Args:
+        evolution_operator: функция (x, params, dt) -> x_next
+        variables_ranges: список [(min, max), ...] для переменных, длина = n_var
+        parameters_ranges: список [(min, max), ...] для параметров, длина = n_param
+        num_of_traj: количество траекторий
+        num_in_traj: число шагов на траектории
+        dt: шаг по времени
+        seed: зерно ГПСЧ
+        max_attempts_factor: множитель для максимального числа попыток
+                             (попытки = max_attempts_factor * num_of_traj)
+
+    Returns:
+        X: array (N, n_var + n_param) - состояния и параметры
+        y: array (N, n_var) - приращения
+    """
+    rng = np.random.default_rng(seed)
+    n_var = len(variables_ranges)
+    n_param = len(parameters_ranges)
+
+    X_list = []
+    y_list = []
+    successful_trajs = 0
+    max_attempts = max_attempts_factor * num_of_traj
+    attempts = 0
+
+    while successful_trajs < num_of_traj and attempts < max_attempts:
+        attempts += 1
+
+        # Генерация начального состояния и параметров
+        x0 = rng.uniform(*zip(*variables_ranges), size=n_var)
+        p = rng.uniform(*zip(*parameters_ranges), size=n_param)
+
+        x = x0.copy()
+        traj_valid = True
+        traj_pairs_X = []
+        traj_pairs_y = []
+
+        for step in range(num_in_traj):
+            x_next = evolution_operator(x, p, dt)
+
+            # Проверка на NaN/Inf
+            if not np.all(np.isfinite(x_next)):
+                traj_valid = False
+                break
+
+            delta = x_next - x
+            traj_pairs_X.append(np.concatenate([x, p]))
+            traj_pairs_y.append(delta)
+            x = x_next
+
+        if traj_valid:
+            X_list.extend(traj_pairs_X)
+            y_list.extend(traj_pairs_y)
+            successful_trajs += 1
+
+    if successful_trajs < num_of_traj:
+        raise RuntimeError(
+            f"Не удалось сгенерировать {num_of_traj} валидных траекторий "
+            f"за {max_attempts} попыток. Собрано только {successful_trajs}."
+        )
+
+    return np.array(X_list), np.array(y_list)
+
+
+
 def generate_pairs_dataset(evolution_operator,
                            variables_ranges,
                            parameters_ranges,

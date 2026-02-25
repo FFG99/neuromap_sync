@@ -187,7 +187,7 @@ class NeuroMapManuscript(pl.LightningModule):
 
     def fit(self, X, y, epochs=1000, lr=1e-3,
             batch_size=64, val_split=0.1,
-            val_every=10, log_every=100, verbose=True,
+            val_every=1, log_every=100, verbose=True,
             num_workers=0, checkpoint_dir=None, history_path=None,
             ckpt_path=None, gradient_clip_val=None,
             gradient_clip_algorithm='norm',
