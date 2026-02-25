@@ -56,14 +56,15 @@ print("Запускаем обучение…")
 model.fit(
     X, y,
     epochs=1000,
-    lr=5e-4,
+    lr=5e-2,
     batch_size=512,
     val_split=0.2,
     checkpoint_dir=str(CHECKPOINT_DIR),
     history_path=str(CHECKPOINT_DIR / "history.json"),
     lr_scheduler=True,
     lr_scheduler_patience=10,
-    lr_scheduler_factor=0.1
+    lr_scheduler_factor=0.1,
+    val_every=1
 )
 
 FINAL_MODEL_PATH = CHECKPOINT_DIR / "model.ckpt"

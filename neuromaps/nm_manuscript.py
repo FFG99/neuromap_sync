@@ -111,12 +111,6 @@ class NeuroMapManuscript(pl.LightningModule):
 
         self.logger_py = get_logger(__name__)
 
-        # === Только статистика для входов, НЕТ статистики для приращений ===
-        self.register_buffer('mu_u', torch.zeros(1, n_var))
-        self.register_buffer('su', torch.ones(1, n_var))
-        self.register_buffer('mu_p', torch.zeros(1, n_param))
-        self.register_buffer('sp', torch.ones(1, n_param))
-
         self.activation = nn.Tanh()
         if num_hidden_layers == 1:
             self.hidden = nn.Linear(n_var + n_param, hidden_size)
@@ -130,14 +124,11 @@ class NeuroMapManuscript(pl.LightningModule):
             self.hidden_layers = nn.ModuleList(layers)
             self.output = nn.Linear(hidden_size, n_var)
 
-        self.criterion = nn.MSELoss()
+        self.criterion = nn.L1Loss()
 
     def forward(self, u, p):
         """Прямой проход – возвращает приращение `d`."""
-        u_norm = (u - self.mu_u) / self.su
-        p_norm = (p - self.mu_p) / self.sp
-
-        z = torch.cat([u_norm, p_norm], dim=1)
+        z = torch.cat([u, p], dim=1)
         if self.num_hidden_layers == 1:
             h = self.activation(self.hidden(z))
         else:
@@ -164,7 +155,7 @@ class NeuroMapManuscript(pl.LightningModule):
     def validation_step(self, batch, batch_idx):
         X_batch, y_batch = batch
         u_batch = X_batch[:, :self.n_var]
-        p_batch = X_batch[:, self.n_var:self.n_param]
+        p_batch = X_batch[:, self.n_var:self.n_var + self.n_param]
 
         pred = self.forward(u_batch, p_batch)
         loss = self.criterion(pred, y_batch)
@@ -214,7 +205,6 @@ class NeuroMapManuscript(pl.LightningModule):
             lr_scheduler_factor (float): Коэффициент уменьшения LR. По умолчанию 0.1.
         """
         self.lr = lr
-        self._compute_statistics(X, y)
 
         # Сохраняем параметры scheduler в гиперпараметры для configure_optimizers
         if lr_scheduler:
@@ -366,30 +356,6 @@ class NeuroMapManuscript(pl.LightningModule):
 
         return np.concatenate(trajectory, axis=0)
 
-    def _compute_statistics(self, X, y):
-        """Вычисление статистики (не учитывает масштаб y)"""
-        u = X[:, :self.n_var]
-        p = X[:, self.n_var:self.n_var + self.n_param]
-        d = y
-
-        if np.any(np.std(d, axis=0) < 1e-8):
-            self.logger_py.warning("Обнаружены константные приращения (std < 1e-8)")
-
-        def update_stat(buffer, data, is_std=False):
-            tensor = torch.tensor(
-                np.mean(data, axis=0, keepdims=True) if not is_std else np.std(data, axis=0, keepdims=True),
-                dtype=torch.float32
-            )
-            buffer.copy_(tensor)
-            if is_std:
-                buffer.clamp_(min=1e-6)
-
-        # Статистика для d НЕ вычисляется
-        update_stat(self.mu_u, u)
-        update_stat(self.su, u, is_std=True)
-        update_stat(self.mu_p, p)
-        update_stat(self.sp, p, is_std=True)
-
     @classmethod
     def load(cls, path, device=None):
         """
@@ -431,12 +397,12 @@ class NeuroMapManuscript(pl.LightningModule):
                 )
             hparams.setdefault('num_hidden_layers', 1)
             model = cls(**hparams)
+            # Загружаем state_dict, игнорируя лишние ключи (например, буферы нормализации из старых версий)
             try:
-                model.load_state_dict(checkpoint['state_dict'], strict=True)
+                model.load_state_dict(checkpoint['state_dict'], strict=False)
             except RuntimeError as e:
                 raise ValueError(
-                    f"Не удалось загрузить state_dict. Возможно, модель была сохранена с другой архитектурой. "
-                    f"Ошибка: {str(e)}"
+                    f"Не удалось загрузить state_dict. Ошибка: {str(e)}"
                 ) from e
             model.to(device)
 
@@ -483,13 +449,11 @@ class NeuroMapManuscript(pl.LightningModule):
             'lr': float(self.lr)
         }
 
-        # Сохраняем текущие значения буферов статистики
+        # Сохраняем только state_dict (буферы нормализации больше не используются)
         state_dict = self.state_dict()
-        buffers = {name: buffer for name, buffer in self.named_buffers()}
 
         checkpoint = {
             'state_dict': state_dict,
-            'buffers': buffers,  # Явно сохраняем буферы
             'hyper_parameters': hparams,
             '_format': 'neuromap_v1.0',
             'torch_version': torch.__version__,
@@ -542,32 +506,30 @@ class NeuroMapManuscript(pl.LightningModule):
         if p_tensor.dim() == 1:
             p_tensor = p_tensor.unsqueeze(0)
 
-        u_norm = (u_tensor - self.mu_u) / self.su
-        p_norm = (p_tensor - self.mu_p) / self.sp
-
-        z = torch.cat([u_norm, p_norm], dim=1)
+        # Нормализация удалена – входные данные подаются как есть
+        z = torch.cat([u_tensor, p_tensor], dim=1)
         activations = self._forward_hidden_activations(z)
         g = self.output(activations[-1])
 
         # d = dt * g
         d = self.dt * g
 
-        # Якобиан: цепочка по слоям
+        # Якобиан: цепочка по слоям (без деления на стандартное отклонение)
         if self.num_hidden_layers == 1:
-            # One hidden layer: J_d = dt * W_output @ diag(h') @ (W_hidden[:, :n_var] / su)
+            # One hidden layer: J_d = dt * W_output @ diag(h') @ W_u
             h_derivative = 1 - activations[0]**2
             W_hidden = self.hidden.weight          # (hidden_size, n_var + n_param)
             W_u = W_hidden[:, :self.n_var]         # (hidden_size, n_var)
             W_output = self.output.weight          # (n_var, hidden_size)
             J_d = self.dt * (
-                W_output @ torch.diag(h_derivative.squeeze()) @ (W_u / self.su.T)
+                W_output @ torch.diag(h_derivative.squeeze()) @ W_u
             )
         else:
             # Multi‑layer: chain rule through all hidden layers
             W_hidden0 = self.hidden.weight          # (hidden_size, n_var + n_param)
             W_u0 = W_hidden0[:, :self.n_var]        # (hidden_size, n_var)
             h_deriv0 = 1 - activations[0]**2
-            d_h_du = torch.diag(h_deriv0.squeeze()) @ (W_u0 / self.su.T)
+            d_h_du = torch.diag(h_deriv0.squeeze()) @ W_u0
             # Propagate through remaining hidden layers
             for l in range(len(self.hidden_layers)):
                 W_l = self.hidden_layers[l].weight    # (hidden_size, hidden_size)
@@ -685,10 +647,8 @@ class NeuroMapManuscript(pl.LightningModule):
 
         batch_size = u_star_tensor.shape[0]
 
-        u_norm = (u_star_tensor - self.mu_u) / self.su
-        p_norm = (p_tensor - self.mu_p) / self.sp
-
-        z = torch.cat([u_norm, p_norm], dim=1)
+        # Нормализация удалена – входные данные подаются как есть
+        z = torch.cat([u_star_tensor, p_tensor], dim=1)
         activations = self._forward_hidden_activations(z)
 
         I = torch.eye(self.n_var, device=self.device)
@@ -701,13 +661,13 @@ class NeuroMapManuscript(pl.LightningModule):
                 W_u = W_hidden[:, :self.n_var]
                 W_output = self.output.weight
                 J_d = self.dt * (
-                    W_output @ torch.diag(h_derivative) @ (W_u / self.su.T)
+                    W_output @ torch.diag(h_derivative) @ W_u
                 )
             else:
                 W_hidden0 = self.hidden.weight
                 W_u0 = W_hidden0[:, :self.n_var]
                 h_deriv0 = 1 - activations[0][i]**2
-                d_h_du = torch.diag(h_deriv0) @ (W_u0 / self.su.T)
+                d_h_du = torch.diag(h_deriv0) @ W_u0
                 for l in range(len(self.hidden_layers)):
                     W_l = self.hidden_layers[l].weight
                     h_deriv_l = 1 - activations[l+1][i]**2
