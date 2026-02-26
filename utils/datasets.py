@@ -15,11 +15,13 @@ def generate_pairs_dataset_finite(evolution_operator,
                                   num_in_traj,
                                   dt,
                                   seed=52,
-                                  max_attempts_factor=10):
+                                  max_attempts_factor=10,
+                                  divergence_threshold=1e4,
+                                  delta_threshold=None):
     """
     Генерация датасета: X = [u, p], y = Δu.
-    Траектории, в которых появляются NaN или Inf, отбрасываются полностью
-    и заменяются новыми, пока не наберётся нужное количество валидных траекторий.
+    Траектории, в которых появляются NaN/Inf или расхождение по норме состояния/приращения,
+    отбрасываются полностью и заменяются новыми.
 
     Args:
         evolution_operator: функция (x, params, dt) -> x_next
@@ -31,6 +33,11 @@ def generate_pairs_dataset_finite(evolution_operator,
         seed: зерно ГПСЧ
         max_attempts_factor: множитель для максимального числа попыток
                              (попытки = max_attempts_factor * num_of_traj)
+        divergence_threshold: траектория отбрасывается, если max(|x|) или max(|x_next|)
+                             превышает это значение (по умолчанию 1e4).
+        delta_threshold: траектория отбрасывается, если max(|delta|) по шагу превышает
+                         это значение. По умолчанию None (не проверять). Можно задать
+                         например 1e3 для защиты от гигантских приращений.
 
     Returns:
         X: array (N, n_var + n_param) - состояния и параметры
@@ -66,7 +73,19 @@ def generate_pairs_dataset_finite(evolution_operator,
                 traj_valid = False
                 break
 
+            # Порог расходимости по состоянию
+            if np.max(np.abs(x_next)) > divergence_threshold or np.max(np.abs(x)) > divergence_threshold:
+                traj_valid = False
+                break
+
             delta = x_next - x
+            if not np.all(np.isfinite(delta)):
+                traj_valid = False
+                break
+            if delta_threshold is not None and np.max(np.abs(delta)) > delta_threshold:
+                traj_valid = False
+                break
+
             traj_pairs_X.append(np.concatenate([x, p]))
             traj_pairs_y.append(delta)
             x = x_next
@@ -83,7 +102,6 @@ def generate_pairs_dataset_finite(evolution_operator,
         )
 
     return np.array(X_list), np.array(y_list)
-
 
 
 def generate_pairs_dataset(evolution_operator,
