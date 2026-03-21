@@ -215,6 +215,156 @@ def plot_compare_heatmaps(x, y, Z_ode, Z_nm, caption=None, *, x_label='x', y_lab
     plt.show()
 
 
+def plot_amplitude_basin(
+    x,
+    y,
+    Z: np.ndarray,
+    divergence_mask: Optional[np.ndarray] = None,
+    *,
+    x_label='x',
+    y_label='y',
+    title: Optional[str] = None,
+    cmap: str = 'plasma',
+    bad_color: str = 'black',
+    diverge_label: str = 'Divergence',
+    vmin: Optional[float] = None,
+    vmax: Optional[float] = None,
+    figsize: Tuple[int, int] = (10, 8),
+    save_path: Optional[str] = None,
+    show: bool = True,
+):
+    """
+    Тепловая карта амплитуды с отдельным цветом для расходимости.
+
+    Рекомендуется передавать `Z`, где расходимость закодирована как `np.nan`,
+    но также можно передать `divergence_mask`.
+    """
+    if divergence_mask is None:
+        divergence_mask = ~np.isfinite(Z)
+
+    Z_plot = np.ma.array(Z, mask=divergence_mask)
+
+    finite_vals = Z[np.isfinite(Z)]
+    if finite_vals.size == 0:
+        # Случай "всё разошлось": чтобы не падать на min/max
+        vmin_ = 0.0
+        vmax_ = 1.0
+    else:
+        vmin_ = float(np.min(finite_vals)) if vmin is None else float(vmin)
+        vmax_ = float(np.max(finite_vals)) if vmax is None else float(vmax)
+
+    cmap_obj = plt.get_cmap(cmap).copy()
+    cmap_obj.set_bad(color=bad_color)
+
+    fig, ax = plt.subplots(figsize=figsize, constrained_layout=True)
+    im = ax.imshow(
+        Z_plot,
+        extent=[x[0], x[-1], y[0], y[-1]],
+        origin='lower',
+        aspect='auto',
+        interpolation='none',
+        cmap=cmap_obj,
+        vmin=vmin_,
+        vmax=vmax_,
+    )
+
+    ax.set_xlabel(x_label)
+    ax.set_ylabel(y_label)
+    if title:
+        ax.set_title(title)
+
+    fig.colorbar(im, ax=ax, label='Amplitude', shrink=0.92, pad=0.02)
+
+    ax.legend(
+        handles=[mpatches.Patch(color=bad_color, label=diverge_label)],
+        loc='upper right',
+        frameon=True,
+    )
+    if save_path:
+        plt.savefig(save_path, dpi=300, bbox_inches='tight')
+        print(f"Сохранено: {save_path}")
+
+    if show:
+        plt.show()
+    else:
+        plt.close()
+
+
+def plot_compare_amplitude_basins(
+    x,
+    y,
+    Z_ode: np.ndarray,
+    Z_nm: np.ndarray,
+    caption: Optional[str] = None,
+    *,
+    x_label: str = 'x',
+    y_label: str = 'y',
+    cmap: str = 'plasma',
+    bad_color: str = 'black',
+    diverge_label: str = 'Divergence',
+):
+    """
+    Сравнение двух тепловых карт амплитуд (ODE vs Neuromap) на общей шкале.
+    Расходимость (np.nan) показывается отдельным цветом.
+    """
+    finite_ode = Z_ode[np.isfinite(Z_ode)]
+    finite_nm = Z_nm[np.isfinite(Z_nm)]
+    finite_all = np.concatenate([finite_ode, finite_nm], axis=0)
+
+    if finite_all.size == 0:
+        vmin_ = 0.0
+        vmax_ = 1.0
+    else:
+        vmin_ = float(np.min(finite_all))
+        vmax_ = float(np.max(finite_all))
+
+    cmap_obj = plt.get_cmap(cmap).copy()
+    cmap_obj.set_bad(color=bad_color)
+
+    fig, axs = plt.subplots(1, 2, figsize=(16, 7), constrained_layout=True)
+    ims = []
+
+    for ax, Z, title in [(axs[0], Z_ode, 'Original'), (axs[1], Z_nm, 'Neuromap')]:
+        divergence_mask = ~np.isfinite(Z)
+        Z_plot = np.ma.array(Z, mask=divergence_mask)
+
+        im = ax.imshow(
+            Z_plot,
+            extent=[x[0], x[-1], y[0], y[-1]],
+            origin='lower',
+            aspect='auto',
+            interpolation='none',
+            cmap=cmap_obj,
+            vmin=vmin_,
+            vmax=vmax_,
+        )
+        ims.append(im)
+        ax.set_xlabel(x_label)
+        ax.set_ylabel(y_label)
+        ax.set_title(title)
+
+    # Один общий colorbar справа, без налезания на оси
+    fig.colorbar(
+        ims[-1],
+        ax=axs,
+        label='Amplitude',
+        shrink=0.92,
+        pad=0.03,
+        location='right',
+    )
+
+    axs[0].legend(
+        handles=[mpatches.Patch(color=bad_color, label=diverge_label)],
+        loc='upper right',
+        frameon=True,
+    )
+
+    if caption:
+        fig.suptitle(caption, fontsize=14)
+
+    plt.show()
+
+
 def plot_compare_trajectories(*trajectories, 
                              labels=None, 
                              caption=None, 
@@ -357,7 +507,7 @@ def _plot_2d_trajectories(trajectories, labels, colors, variables_names, caption
             
             ax.set_xlabel(variables_names[0], fontsize=12)
             ax.set_ylabel(variables_names[1], fontsize=12)
-            ax.set_title(label, fontsize=14, weight='bold')
+            ax.set_title(label, fontsize=14)
             ax.grid(True, alpha=0.3)
             ax.set_xlim(x_min - x_margin, x_max + x_margin)
             ax.set_ylim(y_min - y_margin, y_max + y_margin)

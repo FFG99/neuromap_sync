@@ -333,15 +333,19 @@ class NeuroMapManuscript(pl.LightningModule):
             p = X_tensor[:, self.n_var:self.n_var + self.n_param]
             return self.forward(u, p).cpu().numpy()
 
-    def simulate(self, u0, p, n_steps, divergence_threshold=1e5):
-        """Интегрирование ОДУ с прогресс‑баром и проверкой divergence"""
+    def simulate(self, u0, p, n_steps, verbose=True, divergence_threshold=1e5):
+        """Интегрирование ОДУ с опциональным прогресс‑баром и проверкой divergence"""
         u0 = np.atleast_2d(u0)
         p  = np.atleast_2d(p)
 
         trajectory = [u0.copy()]
         u_current = u0.copy()
 
-        for _ in tqdm(range(n_steps), desc='Симуляция', unit='шаг', ncols=100):
+        iterator = range(n_steps)
+        if verbose:
+            iterator = tqdm(iterator, desc='Симуляция', unit='шаг', ncols=100)
+
+        for _ in iterator:
             X_step = np.concatenate([u_current, p], axis=1)
             d = self.predict(X_step)
             u_current = u_current + d
