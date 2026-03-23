@@ -1,12 +1,56 @@
+import warnings
+from contextlib import contextmanager
+
 import numpy as np
 from .logger import get_logger
-from typing import List, Union, Optional
+from typing import Any, Dict, List, Optional, Union
 from joblib import Parallel, delayed
 from tqdm import tqdm
 
 from utils.rk4 import rk4_step_vectorized_params
 
 logger = get_logger(__name__)
+
+
+@contextmanager
+def _suppress_loky_grid_worker_warning():
+    """
+    loky может выдавать UserWarning при ``return_as='generator'`` и перезапуске воркеров,
+    хотя расчёт завершается нормально (см. обсуждения joblib/loky). Подавляем только
+    это сообщение на время итерации по результатам ``Parallel``.
+    """
+    with warnings.catch_warnings():
+        warnings.filterwarnings(
+            "ignore",
+            message=r"A worker stopped while some jobs were given to the executor",
+            category=UserWarning,
+        )
+        yield
+
+
+def _parallel_for_grid_jobs(
+    n_jobs: int,
+    *,
+    parallel_extra: Optional[Dict[str, Any]] = None,
+) -> Parallel:
+    """
+    ``joblib.Parallel`` (loky) для сеточных циклов: ``return_as='generator'``.
+
+    По умолчанию **не** задаём ``max_tasks_per_child``: принудительный перезапуск воркеров
+    в loky иногда даёт тот же warning «A worker stopped...». Если нужно ограничить память,
+    передайте ``parallel_extra={"max_tasks_per_child": 8}`` (или ``1``) и при необходимости
+    уменьшите ``n_jobs``. Долгие задачи: ``parallel_extra={"timeout": 86400}``.
+    """
+    kw: Dict[str, Any] = dict(
+        n_jobs=n_jobs,
+        backend="loky",
+        return_as="generator",
+    )
+    if parallel_extra:
+        kw.update(parallel_extra)
+    if kw.get("max_tasks_per_child") is None:
+        kw.pop("max_tasks_per_child", None)
+    return Parallel(**kw)
 
 
 def integrate_evolution_operator(
@@ -179,6 +223,7 @@ def grid_of_amplitude(evolution_operator,
                       fixed_point_threshold: float = 1e-12,
                       n_jobs: int = -1,
                       show_grid_progress: bool = True,
+                      parallel_extra: Optional[Dict[str, Any]] = None,
                       x_param_index: Optional[int] = None,
                       y_param_index: Optional[int] = None,
                       *,
@@ -192,6 +237,8 @@ def grid_of_amplitude(evolution_operator,
     Ровно два параметра должны быть сетками (np.ndarray) для построения 2D поля.
 
     ``show_grid_progress``: tqdm по завершённым строкам сетки (без внутреннего tqdm в ``simulate``).
+
+    ``parallel_extra``: доп. аргументы для ``joblib.Parallel`` (см. ``_parallel_for_grid_jobs``).
     """
     grid_indices = [i for i, p in enumerate(params) if isinstance(p, np.ndarray)]
     
@@ -304,10 +351,11 @@ def grid_of_amplitude(evolution_operator,
         desc = "Вычисление сетки (по строкам)"
 
     pbar = tqdm(total=len(y_grid), desc=desc, disable=not show_grid_progress)
-    for i_y, row in Parallel(n_jobs=n_jobs, backend='loky')(
-            delayed(worker)(i) for i in range(len(y_grid))):
-        Z[i_y] = row
-        pbar.update(1)
+    with _suppress_loky_grid_worker_warning():
+        for i_y, row in _parallel_for_grid_jobs(n_jobs, parallel_extra=parallel_extra)(
+                delayed(worker)(i) for i in range(len(y_grid))):
+            Z[i_y] = row
+            pbar.update(1)
     pbar.close()
 
     return Z
@@ -328,6 +376,7 @@ def grid_of_amplitude_basin(
     divergence_threshold: float = 1e5,
     n_jobs: int = -1,
     show_grid_progress: bool = True,
+    parallel_extra: Optional[Dict[str, Any]] = None,
     x_param_index: Optional[int] = None,
     y_param_index: Optional[int] = None,
     *,
@@ -345,6 +394,8 @@ def grid_of_amplitude_basin(
         divergence_mask: bool array shape (len(y), len(x))
 
     ``show_grid_progress``: tqdm по завершённым строкам сетки.
+
+    ``parallel_extra``: доп. аргументы для ``joblib.Parallel`` (см. ``_parallel_for_grid_jobs``).
     """
     grid_indices = [i for i, p in enumerate(params) if isinstance(p, np.ndarray)]
 
@@ -473,12 +524,13 @@ def grid_of_amplitude_basin(
         desc = "Вычисление сетки ODE (амплитуда + расходимость)"
 
     pbar = tqdm(total=len(y_grid), desc=desc, disable=not show_grid_progress)
-    for i_y, row_amp, row_div in Parallel(n_jobs=n_jobs, backend='loky')(
-        delayed(worker)(i) for i in range(len(y_grid))
-    ):
-        Z[i_y] = row_amp
-        divergence_mask[i_y] = row_div
-        pbar.update(1)
+    with _suppress_loky_grid_worker_warning():
+        for i_y, row_amp, row_div in _parallel_for_grid_jobs(n_jobs, parallel_extra=parallel_extra)(
+            delayed(worker)(i) for i in range(len(y_grid))
+        ):
+            Z[i_y] = row_amp
+            divergence_mask[i_y] = row_div
+            pbar.update(1)
     pbar.close()
 
     return Z, divergence_mask
@@ -507,6 +559,7 @@ def grid_of_amplitude_basin_over_initial_state(
     right_part=None,
     ode_amplitude_mode: str = "integrated",
     show_grid_progress: bool = True,
+    parallel_extra: Optional[Dict[str, Any]] = None,
 ) -> tuple[np.ndarray, np.ndarray]:
     """
     Считает "бассейн амплитуд" на сетке по начальным условиям `u0`.
@@ -526,6 +579,8 @@ def grid_of_amplitude_basin_over_initial_state(
 
     ``show_grid_progress``: tqdm по завершённым строкам сетки (параллельный расчёт).
         Передать ``False``, чтобы отключить полоску.
+
+    ``parallel_extra``: доп. аргументы для ``joblib.Parallel`` (см. ``_parallel_for_grid_jobs``).
 
     Возвращает:
         (Z, divergence_mask)
@@ -673,12 +728,13 @@ def grid_of_amplitude_basin_over_initial_state(
         desc=desc,
         disable=not show_grid_progress,
     )
-    for i_y, row_amp, row_div in Parallel(n_jobs=n_jobs, backend="loky")(
-        delayed(worker)(i) for i in range(len(y_grid))
-    ):
-        Z[i_y] = row_amp
-        divergence_mask[i_y] = row_div
-        pbar.update(1)
+    with _suppress_loky_grid_worker_warning():
+        for i_y, row_amp, row_div in _parallel_for_grid_jobs(n_jobs, parallel_extra=parallel_extra)(
+            delayed(worker)(i) for i in range(len(y_grid))
+        ):
+            Z[i_y] = row_amp
+            divergence_mask[i_y] = row_div
+            pbar.update(1)
     pbar.close()
 
     return Z, divergence_mask
@@ -697,6 +753,7 @@ def grid_of_dinamical_regimes(
         max_steps: int = 100_000_000,
         fixed_point_threshold: float = 1e-12,
         n_jobs: int = -1,
+        parallel_extra: Optional[Dict[str, Any]] = None,
         x_param_index: Optional[int] = None,
         y_param_index: Optional[int] = None,
         *,
@@ -708,6 +765,8 @@ def grid_of_dinamical_regimes(
     
     Параметры системы могут быть как фиксированными значениями, так и сетками значений.
     Ровно два параметра должны быть сетками (np.ndarray) для построения 2D поля.
+
+    ``parallel_extra``: доп. аргументы для ``joblib.Parallel`` (см. ``_parallel_for_grid_jobs``).
     """
     grid_indices = [i for i, p in enumerate(params) if isinstance(p, np.ndarray)]
     
@@ -796,10 +855,11 @@ def grid_of_dinamical_regimes(
         desc = "Вычисление сетки динамических режимов (по строкам)"
 
     with tqdm(total=len(y_grid), desc=desc) as pbar:
-        for i_y, row in Parallel(n_jobs=n_jobs, backend='loky')(
-                delayed(worker)(i) for i in range(len(y_grid))):
-            Z[i_y] = row
-            pbar.update(1)
+        with _suppress_loky_grid_worker_warning():
+            for i_y, row in _parallel_for_grid_jobs(n_jobs, parallel_extra=parallel_extra)(
+                    delayed(worker)(i) for i in range(len(y_grid))):
+                Z[i_y] = row
+                pbar.update(1)
 
     return Z
 
