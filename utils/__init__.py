@@ -5,6 +5,7 @@ from .trajectories import (
     grid_of_amplitude,
     grid_of_amplitude_basin,
     grid_of_amplitude_basin_over_initial_state,
+    grid_of_fixed_point_probability_over_params,
 )
 from .plots import (
     plot_trajectory,
@@ -18,7 +19,7 @@ from .datasets import generate_pairs_dataset, DynamicSystemDatasetGenerator, gen
 
 __all__ = ['rk4_step_vectorized_params', 'pass_transient_process', 'get_attractor_trajectory',
            'plot_trajectory', 'setup_logger', 'get_logger', 'grid_of_amplitude', 'grid_of_amplitude_basin',
-           'grid_of_amplitude_basin_over_initial_state',
+           'grid_of_amplitude_basin_over_initial_state', 'grid_of_fixed_point_probability_over_params',
            'plot_heatmap', 'generate_pairs_dataset', 'plot_compare_trajectories',
            'plot_amplitude_basin', 'plot_compare_amplitude_basins',
            'DynamicSystemDatasetGenerator', 'generate_sequence_dataset', 'generate_pairs_dataset_finite']

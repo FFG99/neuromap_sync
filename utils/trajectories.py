@@ -740,6 +740,172 @@ def grid_of_amplitude_basin_over_initial_state(
     return Z, divergence_mask
 
 
+def grid_of_fixed_point_probability_over_params(
+    evolution_operator,
+    state,
+    params: List[Union[np.ndarray, float, int]],
+    dt: float,
+    n_steps: int,
+    x_init_grid: np.ndarray,
+    y_init_grid: np.ndarray,
+    x_state_index: int,
+    y_state_index: int,
+    fixed_point_threshold: float = 1e-10,
+    divergence_threshold: float = 1e5,
+    n_jobs: int = -1,
+    show_grid_progress: bool = True,
+    parallel_extra: Optional[Dict[str, Any]] = None,
+    x_param_index: Optional[int] = None,
+    y_param_index: Optional[int] = None,
+    *,
+    model=None,
+) -> np.ndarray:
+    """
+    Строит 2D-карту вероятности попадания в неподвижную точку по двум параметрам.
+
+    Для каждой пары параметров запускается набор траекторий из сетки начальных условий
+    ``(x_init_grid, y_init_grid)``. Вероятность = доля траекторий, у которых выполнено
+    условие сходимости ``||u_t - u_(t-1)|| < fixed_point_threshold``.
+
+    Важно: распараллеливание выполняется только по сетке параметров (по строкам y),
+    внутри каждой точки параметров расчёт по начальным условиям идёт последовательно.
+
+    Режимы:
+    - ``model is not None``: используется ``model.simulate(...)``.
+    - ``model is None``: используется ``evolution_operator`` как шаговая функция.
+    """
+    if x_state_index == y_state_index:
+        raise ValueError("x_state_index и y_state_index должны быть разными")
+    if n_steps < 2:
+        raise ValueError("n_steps должен быть >= 2, чтобы проверить критерий неподвижной точки")
+
+    grid_indices = [i for i, p in enumerate(params) if isinstance(p, np.ndarray)]
+    if len(grid_indices) != 2:
+        raise ValueError(
+            f"Должно быть ровно 2 параметра-сетки, найдено {len(grid_indices)}. "
+            "Остальные параметры должны быть фиксированными (float/int)."
+        )
+
+    if x_param_index is None:
+        x_param_idx = grid_indices[0]
+    else:
+        if x_param_index not in grid_indices:
+            raise ValueError(f"x_param_index={x_param_index} не указывает на параметр-сетку")
+        x_param_idx = x_param_index
+
+    if y_param_index is None:
+        try:
+            y_param_idx = next(idx for idx in grid_indices if idx != x_param_idx)
+        except StopIteration:
+            raise ValueError("Не найден второй параметр-сетки для оси Y")
+    else:
+        if y_param_index not in grid_indices:
+            raise ValueError(f"y_param_index={y_param_index} не указывает на параметр-сетку")
+        if y_param_index == x_param_idx:
+            raise ValueError("x_param_index и y_param_index должны указывать на разные параметры")
+        y_param_idx = y_param_index
+
+    x_param_grid = np.asarray(params[x_param_idx], dtype=float)
+    y_param_grid = np.asarray(params[y_param_idx], dtype=float)
+    if x_param_grid.ndim != 1 or y_param_grid.ndim != 1:
+        raise ValueError("Параметры-сетки должны быть одномерными массивами")
+
+    x_init_grid = np.asarray(x_init_grid, dtype=float)
+    y_init_grid = np.asarray(y_init_grid, dtype=float)
+    if x_init_grid.ndim != 1 or y_init_grid.ndim != 1:
+        raise ValueError("x_init_grid и y_init_grid должны быть одномерными массивами")
+
+    base_state = np.asarray(state, dtype=float).copy()
+    total_initial_conditions = int(len(x_init_grid) * len(y_init_grid))
+    if total_initial_conditions == 0:
+        raise ValueError("Сетка начальных условий не должна быть пустой")
+
+    P = np.empty((len(y_param_grid), len(x_param_grid)), dtype=float)
+
+    def build_params_local(x_val: float, y_val: float) -> List[float]:
+        result = []
+        for i, p in enumerate(params):
+            if i == x_param_idx:
+                result.append(float(x_val))
+            elif i == y_param_idx:
+                result.append(float(y_val))
+            else:
+                result.append(float(p))
+        return result
+
+    def converges_to_fixed_point(u0: np.ndarray, p_local: List[float]) -> bool:
+        if model is not None:
+            try:
+                trajectory = model.simulate(
+                    u0=u0,
+                    p=p_local,
+                    n_steps=n_steps,
+                    verbose=False,
+                    divergence_threshold=divergence_threshold,
+                )
+            except TypeError:
+                trajectory = model.simulate(
+                    u0=u0,
+                    p=p_local,
+                    n_steps=n_steps,
+                    divergence_threshold=divergence_threshold,
+                )
+
+            if trajectory is None or len(trajectory) < 2:
+                return False
+
+            last = np.asarray(trajectory[-1], dtype=float)
+            prev = np.asarray(trajectory[-2], dtype=float)
+            return bool(np.linalg.norm(last - prev) < fixed_point_threshold)
+
+        if evolution_operator is None:
+            raise ValueError("Передайте либо model, либо evolution_operator")
+
+        u_prev = np.asarray(u0, dtype=float).copy()
+        for _ in range(n_steps):
+            u_curr = evolution_operator(u_prev, p_local, dt)
+            if np.linalg.norm(u_curr) > divergence_threshold:
+                return False
+            if np.linalg.norm(u_curr - u_prev) < fixed_point_threshold:
+                return True
+            u_prev = u_curr
+        return False
+
+    def worker(i_y: int) -> tuple[int, np.ndarray]:
+        py = y_param_grid[i_y]
+        row_probs: List[float] = []
+        for px in x_param_grid:
+            p_local = build_params_local(px, py)
+            fixed_count = 0
+
+            for y0 in y_init_grid:
+                for x0 in x_init_grid:
+                    u0 = base_state.copy()
+                    u0[x_state_index] = float(x0)
+                    u0[y_state_index] = float(y0)
+                    if converges_to_fixed_point(u0, p_local):
+                        fixed_count += 1
+
+            row_probs.append(fixed_count / total_initial_conditions)
+
+        return i_y, np.array(row_probs, dtype=float)
+
+    pbar = tqdm(
+        total=len(y_param_grid),
+        desc="Сетка по параметрам: P(неподвижная точка)",
+        disable=not show_grid_progress,
+    )
+    with _suppress_loky_grid_worker_warning():
+        for i_y, row_probs in _parallel_for_grid_jobs(n_jobs, parallel_extra=parallel_extra)(
+            delayed(worker)(i) for i in range(len(y_param_grid))
+        ):
+            P[i_y] = row_probs
+            pbar.update(1)
+    pbar.close()
+
+    return P
+
+
 def grid_of_dinamical_regimes(
         evolution_operator,
         state,
