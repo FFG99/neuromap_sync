@@ -529,18 +529,16 @@ class NeuroMapManuscript(pl.LightningModule):
                 W_output @ torch.diag(h_derivative.squeeze()) @ W_u
             )
         else:
-            # Multi‑layer: chain rule through all hidden layers
-            W_hidden0 = self.hidden.weight          # (hidden_size, n_var + n_param)
-            W_u0 = W_hidden0[:, :self.n_var]        # (hidden_size, n_var)
+            # Multi‑layer: chain rule through all hidden layers (hidden_layers[0] maps z → h₁)
+            W0 = self.hidden_layers[0].weight
+            W_u0 = W0[:, :self.n_var]
             h_deriv0 = 1 - activations[0]**2
             d_h_du = torch.diag(h_deriv0.squeeze()) @ W_u0
-            # Propagate through remaining hidden layers
-            for l in range(len(self.hidden_layers)):
-                W_l = self.hidden_layers[l].weight    # (hidden_size, hidden_size)
-                h_deriv_l = 1 - activations[l+1]**2
-                d_h_du = torch.diag(h_deriv_l.squeeze()) @ W_l @ d_h_du
-            # Output layer
-            W_output = self.output.weight              # (n_var, hidden_size)
+            for k in range(1, len(self.hidden_layers)):
+                Wk = self.hidden_layers[k].weight
+                h_deriv_k = 1 - activations[k]**2
+                d_h_du = torch.diag(h_deriv_k.squeeze()) @ Wk @ d_h_du
+            W_output = self.output.weight
             J_d = self.dt * (W_output @ d_h_du)
 
         return d.squeeze().cpu().detach().numpy(), J_d.cpu().detach().numpy()
@@ -668,14 +666,14 @@ class NeuroMapManuscript(pl.LightningModule):
                     W_output @ torch.diag(h_derivative) @ W_u
                 )
             else:
-                W_hidden0 = self.hidden.weight
-                W_u0 = W_hidden0[:, :self.n_var]
+                W0 = self.hidden_layers[0].weight
+                W_u0 = W0[:, :self.n_var]
                 h_deriv0 = 1 - activations[0][i]**2
                 d_h_du = torch.diag(h_deriv0) @ W_u0
-                for l in range(len(self.hidden_layers)):
-                    W_l = self.hidden_layers[l].weight
-                    h_deriv_l = 1 - activations[l+1][i]**2
-                    d_h_du = torch.diag(h_deriv_l) @ W_l @ d_h_du
+                for k in range(1, len(self.hidden_layers)):
+                    Wk = self.hidden_layers[k].weight
+                    h_deriv_k = 1 - activations[k][i]**2
+                    d_h_du = torch.diag(h_deriv_k) @ Wk @ d_h_du
                 dg_du = self.output.weight @ d_h_du
                 J_d = self.dt * (dg_du)
 
