@@ -1,6 +1,6 @@
 from systems import chua_rk4
 from utils import generate_sequence_dataset
-from neuromaps import NeuroMapFixed
+from neuromaps import NeuroMapTargetNormalized
 
 X_seq, y_seq = generate_sequence_dataset(
     evolution_operator=chua_rk4,
@@ -13,7 +13,7 @@ X_seq, y_seq = generate_sequence_dataset(
     seed=52
 )
 
-model = NeuroMapFixed(n_var=3, n_param=5, hidden_size=512, dt=0.01)
+model = NeuroMapTargetNormalized(n_var=3, n_param=5, hidden_size=512, dt=0.01)
 
 model.fit_recursive(
     X_seq, y_seq,

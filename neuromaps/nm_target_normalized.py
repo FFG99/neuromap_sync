@@ -79,7 +79,7 @@ class HistoryCallback(Callback):
         return self.history.copy()
 
 
-class NeuroMapFixed(pl.LightningModule):
+class NeuroMapTargetNormalized(pl.LightningModule):
     
     def __init__(self, n_var, n_param, hidden_size=50, num_hidden_layers=1, dt=0.01, lr=1e-3):
         super().__init__()

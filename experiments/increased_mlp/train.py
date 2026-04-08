@@ -3,7 +3,7 @@ from pathlib import Path
 
 from systems.van_der_pol_rk4 import van_der_pol_rk4
 from utils import generate_pairs_dataset
-from neuromaps import NeuroMapFixed
+from neuromaps import NeuroMapTargetNormalized
 
 X, y = generate_pairs_dataset(
     evolution_operator=van_der_pol_rk4,
@@ -15,7 +15,7 @@ X, y = generate_pairs_dataset(
     seed=52
 )
 
-model = NeuroMapFixed(
+model = NeuroMapTargetNormalized(
     n_var=2,
     n_param=2,
     hidden_size=1024,

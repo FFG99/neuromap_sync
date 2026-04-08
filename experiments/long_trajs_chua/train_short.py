@@ -1,6 +1,6 @@
 from systems import chua_rk4
 from utils import generate_sequence_dataset
-from neuromaps import NeuroMapFixed
+from neuromaps import NeuroMapTargetNormalized
 import numpy as np
 
 # Генерируем тот же датасет последовательностей
@@ -25,7 +25,7 @@ y = y_seq.reshape(N * seq_len, -1)  # (N*seq_len, n_var)
 
 print(f"Датасет преобразован: X.shape={X.shape}, y.shape={y.shape}")
 
-model = NeuroMapFixed(n_var=3, n_param=5, hidden_size=512, dt=0.01)
+model = NeuroMapTargetNormalized(n_var=3, n_param=5, hidden_size=512, dt=0.01)
 
 model.fit(
     X, y,

@@ -7,13 +7,13 @@ class CoupledOscillators:
         Инициализация связанных осцилляторов.
         
         Args:
-            model1: первый нейромэп (NeuroMapFixed или NeuroMapOriginal)
-            model2: второй нейромэп (NeuroMapFixed или NeuroMapOriginal)
+            model1: первый нейромэп (NeuroMapTargetNormalized или NeuroMapOriginal)
+            model2: второй нейромэп (NeuroMapTargetNormalized или NeuroMapOriginal)
         """
         if not self._is_neuromap(model1):
-            raise ValueError("model1 должен быть нейромэпом (NeuroMapFixed или NeuroMapOriginal)")
+            raise ValueError("model1 должен быть нейромэпом (NeuroMapTargetNormalized или NeuroMapOriginal)")
         if not self._is_neuromap(model2):
-            raise ValueError("model2 должен быть нейромэпом (NeuroMapFixed или NeuroMapOriginal)")
+            raise ValueError("model2 должен быть нейромэпом (NeuroMapTargetNormalized или NeuroMapOriginal)")
         
         self.model1 = model1
         self.model2 = model2
