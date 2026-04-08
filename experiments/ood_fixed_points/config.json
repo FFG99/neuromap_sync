@@ -1,0 +1,34 @@
+{
+  "seed": 123,
+  "dt": 0.01,
+  "variables_ranges": [
+    [
+      -8.0,
+      8.0
+    ],
+    [
+      -80.0,
+      80.0
+    ]
+  ],
+  "parameters_ranges_train": [
+    [
+      -2.0,
+      0.4
+    ],
+    [
+      0.03,
+      0.08
+    ]
+  ],
+  "num_of_traj": 12500,
+  "num_in_traj": 10,
+  "epochs": 300,
+  "batch_size": 512,
+  "val_split": 0.2,
+  "models": [
+    "original",
+    "target_normalized",
+    "manuscript"
+  ]
+}
