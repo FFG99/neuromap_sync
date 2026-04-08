@@ -2,3 +2,4 @@ neuromap_sync.egg-info/
 __pycache__/
 venv/
 lightning_logs/
+experiments/ood_fixed_points/results/
