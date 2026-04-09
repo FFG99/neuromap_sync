@@ -1,11 +1,16 @@
 import numpy as np
 import multiprocessing as mp
-from typing import Callable, Optional, Tuple, Dict, Any
+from typing import Callable, Optional, Tuple, Dict, Any, List
 import os
 import json
 import warnings
 
 from .trajectories import calculate_dynamic_regime
+
+
+def _point_in_axis_aligned_box(point: np.ndarray, ranges: List[Tuple[float, float]]) -> bool:
+    """True, если точка лежит в замкнутом декартовом произведении интервалов ranges."""
+    return all(r[0] <= z <= r[1] for z, r in zip(point, ranges))
 
 
 def generate_pairs_dataset_finite(evolution_operator,
@@ -17,7 +22,9 @@ def generate_pairs_dataset_finite(evolution_operator,
                                   seed=52,
                                   max_attempts_factor=10,
                                   divergence_threshold=1e4,
-                                  delta_threshold=None):
+                                  delta_threshold=None,
+                                  exclude_variables_ranges=None,
+                                  exclude_parameters_ranges=None):
     """
     Генерация датасета: X = [u, p], y = Δu.
     Траектории, в которых появляются NaN/Inf или расхождение по норме состояния/приращения,
@@ -38,6 +45,14 @@ def generate_pairs_dataset_finite(evolution_operator,
         delta_threshold: траектория отбрасывается, если max(|delta|) по шагу превышает
                          это значение. По умолчанию None (не проверять). Можно задать
                          например 1e3 для защиты от гигантских приращений.
+        exclude_variables_ranges: опционально список [(min, max), ...] длины n_var.
+            Если задан только он — траектория не принимается, когда начальное x0
+            попадает в этот прямоугольник в фазовом пространстве.
+        exclude_parameters_ranges: опционально список [(min, max), ...] длины n_param.
+            Если задан только он — не принимаем траектории с параметром p в этом боксе.
+            Если заданы оба exclude_* — отбрасываем, когда одновременно x0 в первом боксе
+            и p во втором (вырезание подпрямоугольника в произведении областей).
+            Чтобы вырезать только по μ, задайте по λ тот же интервал, что в parameters_ranges.
 
     Returns:
         X: array (N, n_var + n_param) - состояния и параметры
@@ -59,6 +74,18 @@ def generate_pairs_dataset_finite(evolution_operator,
         # Генерация начального состояния и параметров
         x0 = rng.uniform(*zip(*variables_ranges), size=n_var)
         p = rng.uniform(*zip(*parameters_ranges), size=n_param)
+
+        if exclude_variables_ranges is not None and exclude_parameters_ranges is not None:
+            if _point_in_axis_aligned_box(x0, exclude_variables_ranges) and _point_in_axis_aligned_box(
+                p, exclude_parameters_ranges
+            ):
+                continue
+        elif exclude_variables_ranges is not None:
+            if _point_in_axis_aligned_box(x0, exclude_variables_ranges):
+                continue
+        elif exclude_parameters_ranges is not None:
+            if _point_in_axis_aligned_box(p, exclude_parameters_ranges):
+                continue
 
         x = x0.copy()
         traj_valid = True
