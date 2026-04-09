@@ -113,7 +113,7 @@ def main() -> None:
     print(f"Сохранено: {ode_path}")
 
     print("Neuromap: P(НТ) по (λ, β)…")
-    model = NeuroMapManuscript.load(str(args.checkpoint))
+    model = NeuroMapManuscript.load(str(args.checkpoint), device="cpu")
     P_nm = grid_of_fixed_point_probability_over_params(
         None,
         base_state,

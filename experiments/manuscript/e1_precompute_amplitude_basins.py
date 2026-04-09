@@ -96,7 +96,7 @@ def precompute_amplitude_basin(
     )
 
     print("Neuromap: та же сетка, integrated…")
-    model = NeuroMapManuscript.load(str(checkpoint))
+    model = NeuroMapManuscript.load(str(checkpoint), device="cpu")
     Z_nm, _mask_nm = grid_of_amplitude_basin_over_initial_state(
         None,
         base_state,
