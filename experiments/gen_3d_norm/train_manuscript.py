@@ -4,7 +4,8 @@ import torch
 
 from systems.generator_3d import generator_3d_rk4
 from utils import generate_pairs_dataset
-from neuromaps import NeuroMapTargetNormalized
+from neuromaps import NeuroMapManuscript
+
 
 def main() -> None:
     torch.manual_seed(52)
@@ -20,12 +21,12 @@ def main() -> None:
         seed=52,
     )
 
-    checkpoint_dir = "experiments/gen_3d_norm/checkpoints/fixed"
-    history_path = "experiments/gen_3d_norm/checkpoints/fixed/history.json"
+    checkpoint_dir = "experiments/gen_3d_norm/checkpoints/manuscript"
+    history_path = "experiments/gen_3d_norm/checkpoints/manuscript/history.json"
     Path(checkpoint_dir).mkdir(parents=True, exist_ok=True)
 
     print("Подготовка модели...")
-    model = NeuroMapTargetNormalized(n_var=3, n_param=4, hidden_size=256, dt=0.001, lr=1e-4)
+    model = NeuroMapManuscript(n_var=3, n_param=4, hidden_size=256, dt=0.001, lr=1e-4)
 
     print("\n=== Начало обучения ===")
     model.fit(
@@ -50,7 +51,7 @@ def main() -> None:
         ckpt_path=None,
     )
 
-    model_path = "experiments/gen_3d_norm/checkpoints/fixed/model_final.ckpt"
+    model_path = "experiments/gen_3d_norm/checkpoints/manuscript/model_final.ckpt"
     model.save(model_path, save_history=True)
     print(f"\nМодель успешно сохранена в {model_path}")
 
@@ -62,3 +63,4 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+
