@@ -95,10 +95,11 @@ def plot_trajectory(traj,
             raise ValueError(f"Траектория размерности {dimension} не поддерживается")
 
 
-def plot_heatmap(x, y, Z, *, x_label='x', y_label='y', title=None):
-    X, Y = np.meshgrid(x, y)
-
-    fig, ax = plt.subplots(figsize=(10, 8))
+def plot_heatmap(x, y, Z, *, x_label='x', y_label='y', title=None, ax=None):
+    own_fig = ax is None
+    if own_fig:
+        _, ax = plt.subplots(figsize=(10, 8))
+    fig = ax.figure
 
     im = ax.imshow(Z, extent=[x[0], x[-1], y[0], y[-1]], origin='lower',
                    aspect='auto', interpolation='none', cmap='plasma')
@@ -109,8 +110,9 @@ def plot_heatmap(x, y, Z, *, x_label='x', y_label='y', title=None):
     if title:
         ax.set_title(title)
 
-    cbar = fig.colorbar(im, ax=ax)
-    plt.tight_layout()
+    fig.colorbar(im, ax=ax)
+    if own_fig:
+        plt.tight_layout()
 
 
 def visualize_dynamic_regime_grid(Z: np.ndarray,
