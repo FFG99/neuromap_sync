@@ -2,6 +2,9 @@
 """
 Предвычисление карты P(НТ) по параметрам для ODE и нейроотображения (``grid_of_fixed_point_probability_over_params``).
 
+Дефолты как в ``e1_analysis.ipynb`` до выноса скриптов (commit 4ee0db8273364a58e928c76c62ee7686b5519c3f),
+с дополнением: в ноутбуке считался только Neuromap; здесь по тем же параметрам считаются и ODE, и Neuromap.
+
 Запуск из корня репозитория::
 
     python experiments/manuscript/e1_precompute_fixed_point_probability.py \\
@@ -24,20 +27,20 @@ from neuromaps import NeuroMapManuscript
 from systems.vdp_mod1 import vdp_mod1_rk4
 from utils import grid_of_fixed_point_probability_over_params
 
-# Как в ``e1_train.py``
+# Дефолты как в ``e1_analysis.ipynb`` до выноса скриптов (commit 4ee0db8273364a58e928c76c62ee7686b5519c3f)
 DEFAULT_LAMBDA_RANGE = (-3.0, 1.0)
 DEFAULT_BETA_RANGE = (0.02, 0.1)
-DEFAULT_N_LAMBDA = 45
-DEFAULT_N_BETA = 45
+DEFAULT_N_LAMBDA = 20
+DEFAULT_N_BETA = 20
 
-DEFAULT_U1_RANGE = (-10.19, 10.18)
-DEFAULT_U2_RANGE = (-136.5, 136.5)
+DEFAULT_U1_RANGE = (-10.0, 10.0)
+DEFAULT_U2_RANGE = (-10.0, 10.0)
 DEFAULT_N_IC_U1 = 10
 DEFAULT_N_IC_U2 = 10
 
 DEFAULT_DT = 0.01
-DEFAULT_N_STEPS = 8000
-DEFAULT_FP_THRESHOLD = 1e-10
+DEFAULT_N_STEPS = 4000
+DEFAULT_FP_THRESHOLD = 1e-4
 DEFAULT_DIVERGENCE = 1e5
 
 
