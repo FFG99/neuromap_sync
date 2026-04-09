@@ -12,9 +12,10 @@ def vdp_mod2_right_part(state, params):
     """
     x1, x2 = state
     lam, mu = params
+    omega = 5.1
 
     dx1 =  x2
-    dx2 = lam * (1 - x1**2) * x2 - x1 + mu * x1**3
+    dx2 = (lam + mu * x1**2 - x1**4) * x2 - omega**2 * x1
 
     return np.array([dx1, dx2])
 
