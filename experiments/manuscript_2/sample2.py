@@ -1,10 +1,7 @@
 """
-Обучение NeuroMap на vdp_mod2: те же VARIABLES_RANGES и PARAMETERS_RANGES, что в e2_train_mu_full.py,
-но начальные (x₀, p) с p в подпрямоугольнике EXCLUDE_PARAMETERS_RANGES отбрасываются
-(равномерное распределение на большой области с вырезанной подобластью по параметрам).
-
-Чтобы вырезать только полосу по μ при фиксированном полном диапазоне λ, в EXCLUDE_PARAMETERS_RANGES
-по λ задают тот же интервал, что и в PARAMETERS_RANGES — см. e2_config.
+Обучение NeuroMap на vdp_mod2: те же VARIABLES_RANGES и PARAMETERS_RANGES, что в sample1.py,
+но начальные состояния x₀ внутри подпрямоугольника EXCLUDE_VARIABLES_RANGES
+на фазовой плоскости отбрасываются.
 """
 import sys
 from pathlib import Path
@@ -24,7 +21,7 @@ from e2_config import (
     SEED,
     VARIABLES_RANGES,
     PARAMETERS_RANGES,
-    EXCLUDE_PARAMETERS_RANGES,
+    EXCLUDE_VARIABLES_RANGES,
     NUM_OF_TRAJ,
     NUM_IN_TRAJ,
     DT,
@@ -43,7 +40,7 @@ from e2_config import (
 CHECKPOINT_DIR = Path(__file__).resolve().parent / "checkpoints" / "mu_exclude_subbox"
 CHECKPOINT_DIR.mkdir(parents=True, exist_ok=True)
 
-print("Генерация данных (та же область, минус подпрямоугольник в параметрах)…")
+print("Генерация данных (та же область, минус подпрямоугольник на фазовой плоскости)…")
 X, y = generate_pairs_dataset_finite(
     evolution_operator=vdp_mod2_rk4,
     variables_ranges=VARIABLES_RANGES,
@@ -52,7 +49,7 @@ X, y = generate_pairs_dataset_finite(
     num_in_traj=NUM_IN_TRAJ,
     dt=DT,
     seed=SEED,
-    exclude_parameters_ranges=EXCLUDE_PARAMETERS_RANGES,
+    exclude_variables_ranges=EXCLUDE_VARIABLES_RANGES,
 )
 print("X stats: min =", X.min(), "max =", X.max(), "mean abs =", np.mean(np.abs(X)))
 print("y stats: min =", y.min(), "max =", y.max(), "mean abs =", np.mean(np.abs(y)))
