@@ -40,6 +40,17 @@ from e2_config import (
 CHECKPOINT_DIR = Path(__file__).resolve().parent / "checkpoints" / "mu_exclude_ep"
 CHECKPOINT_DIR.mkdir(parents=True, exist_ok=True)
 
+# Секущая Пуанкаре: S(x, p) = x1.
+def secant_plane(state, params):
+    _ = params
+    return state[0]
+
+
+def secant_plane_derivatives(state, params):
+    _ = state, params
+    return np.array([1.0, 0.0], dtype=np.float64)
+
+
 # Сопоставляем объём обучающей выборки обычному finite-генератору.
 target_samples = NUM_OF_TRAJ * NUM_IN_TRAJ
 
@@ -51,6 +62,8 @@ generator = DynamicSystemDatasetGenerator(
     parameters_ranges=PARAMETERS_RANGES,
     n_transient=200,
     steps_per_trajectory=NUM_IN_TRAJ,
+    secant_plane=secant_plane,
+    secant_plane_derivatives=secant_plane_derivatives,
     dt=DT,
     seed=SEED,
 )
