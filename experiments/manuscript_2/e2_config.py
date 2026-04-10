@@ -30,3 +30,6 @@ LR_SCHEDULER = True
 LR_SCHEDULER_PATIENCE = 10
 LR_SCHEDULER_FACTOR = 0.1
 VAL_EVERY = 1
+
+# Сохранение датасета для e2_train_mu_exclude_ep (путь относительно experiments/manuscript_2/)
+EP_DATASET_NPZ = "datasets/mu_exclude_ep.npz"

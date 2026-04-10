@@ -35,6 +35,7 @@ from e2_config import (
     LR_SCHEDULER_PATIENCE,
     LR_SCHEDULER_FACTOR,
     VAL_EVERY,
+    EP_DATASET_NPZ,
 )
 
 CHECKPOINT_DIR = Path(__file__).resolve().parent / "checkpoints" / "mu_exclude_ep"
@@ -68,6 +69,11 @@ generator = DynamicSystemDatasetGenerator(
     seed=SEED,
 )
 X, y, info = generator.generate(target_samples=target_samples, n_jobs=-1)
+
+dataset_path = _M2 / EP_DATASET_NPZ
+dataset_path.parent.mkdir(parents=True, exist_ok=True)
+generator.save(str(dataset_path), overwrite=True)
+print(f"Датасет сохранён: {dataset_path}")
 
 print("X stats: min =", X.min(), "max =", X.max(), "mean abs =", np.mean(np.abs(X)))
 print("y stats: min =", y.min(), "max =", y.max(), "mean abs =", np.mean(np.abs(y)))
