@@ -4,7 +4,7 @@
 
 Дефолты как в ``e1_analysis.ipynb`` до выноса скриптов (commit 4ee0db8273364a58e928c76c62ee7686b5519c3f):
   - ODE: ``ode_amplitude_mode="secant"``, ``n_transient=300``, ``n_attractor=200``
-  - Neuromap: ``ode_amplitude_mode="integrated"``, ``n_transient=5000``, ``n_attractor=5000``
+  - Neuromap: ``ode_amplitude_mode="integrated"``, ``n_transient=50000``, ``n_attractor=50000``
 
 Запуск из корня репозитория::
 
@@ -39,8 +39,8 @@ DEFAULT_BETA = 0.07
 DEFAULT_DT = 0.01
 DEFAULT_ODE_N_TRANSIENT = 300
 DEFAULT_ODE_N_ATTRACTOR = 200
-DEFAULT_NM_N_TRANSIENT = 5000
-DEFAULT_NM_N_ATTRACTOR = 5000
+DEFAULT_NM_N_TRANSIENT = 50000
+DEFAULT_NM_N_ATTRACTOR = 50000
 DEFAULT_DIVERGENCE = 1e5
 
 
