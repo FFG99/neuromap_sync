@@ -199,15 +199,18 @@ def calculate_dynamic_regime(evolution_operator, right_part,
     )
 
     if traj is None:
-        return {"type": "D"}
-    
-    if len(traj) == 1:
-        return {"type": "EP"}
-    
-    if len(traj) < n_attractor:
-        return {"type": "P", "period": len(traj)}
-    
-    return {"type": "NP"}
+        return {"type": "D", "amplitude": None}
+
+    traj_arr = np.asarray(traj, dtype=np.float64)
+    if traj_arr.shape[0] == 1:
+        return {"type": "EP", "amplitude": 0.0}
+
+    amplitude = float(np.linalg.norm(np.ptp(traj_arr, axis=0)))
+
+    if traj_arr.shape[0] < n_attractor:
+        return {"type": "P", "period": int(traj_arr.shape[0]), "amplitude": amplitude}
+
+    return {"type": "NP", "amplitude": amplitude}
 
 
 def grid_of_amplitude(evolution_operator,

@@ -192,7 +192,8 @@ class DynamicSystemDatasetGenerator:
                  secant_plane_derivatives: Optional[Callable] = None,
                  accuracy: float = 1e-3,
                  dt: float = 0.01,
-                 seed: int = 52):
+                 seed: int = 52,
+                 reject_amplitude_above: Optional[float] = None):
         """
         Параметры:
             evolution_operator: Функция эволюции системы: (state, params, dt) -> next_state
@@ -208,6 +209,9 @@ class DynamicSystemDatasetGenerator:
             accuracy: Точность для определения типа аттрактора
             dt: Шаг интегрирования
             seed: Seed для генератора случайных чисел
+            reject_amplitude_above: Если задано, траектории с амплитудой аттрактора на сечении
+                (как в ``calculate_dynamic_regime``: ||ptp||_2 по точкам сечения) >= порога
+                отбрасываются (например, «большой» предельный цикл при двухмасштабной динамике Чуа).
         """
         self.evolution_operator = evolution_operator
         self.right_part = right_part
@@ -222,7 +226,8 @@ class DynamicSystemDatasetGenerator:
         self.accuracy = accuracy
         self.dt = dt
         self.seed = seed
-        
+        self.reject_amplitude_above = reject_amplitude_above
+
         self.rng = np.random.default_rng(seed)
         self.n_var = len(variables_ranges)
         self.n_param = len(parameters_ranges)
@@ -301,6 +306,12 @@ class DynamicSystemDatasetGenerator:
                             # Пропуск неподвижных точек
                             if regime.get("type") == "EP":
                                 info['rejected_fixed_points'] += 1
+                            elif self.reject_amplitude_above is not None:
+                                amp = regime.get("amplitude")
+                                if amp is not None and amp >= self.reject_amplitude_above:
+                                    info['rejected_large_amplitude'] += 1
+                                elif self._generate_trajectory_steps(x_init, p_init, X_list, y_list, info):
+                                    info['accepted_trajectories'] += 1
                             else:
                                 # Генерация шагов траектории
                                 if self._generate_trajectory_steps(x_init, p_init, X_list, y_list, info):
@@ -336,7 +347,9 @@ class DynamicSystemDatasetGenerator:
         self.info = info
         
         print(f"Генерация завершена. Всего образцов: {len(self.X)}")
-        
+        if info.get("rejected_large_amplitude"):
+            print(f"Отброшено по амплитуде (>= {self.reject_amplitude_above}): {info['rejected_large_amplitude']}")
+
         return self.X, self.y, self.info
 
     def _generate_random_point(self) -> Tuple[np.ndarray, np.ndarray]:
@@ -398,6 +411,7 @@ class DynamicSystemDatasetGenerator:
         return {
             'total_trajectories_processed': 0,
             'rejected_fixed_points': 0,
+            'rejected_large_amplitude': 0,
             'divergence_trajs_number': 0,
             'accepted_trajectories': 0,
             'total_samples_generated': 0,
@@ -464,6 +478,7 @@ class DynamicSystemDatasetGenerator:
                 # Сохраняем флаги наличия функций (для информации)
                 'has_secant_plane': self.secant_plane is not None,
                 'has_secant_plane_derivatives': self.secant_plane_derivatives is not None,
+                'reject_amplitude_above': self.reject_amplitude_above,
             }))
         )
         print(f"Датасет сохранен в {filepath}")
@@ -509,7 +524,8 @@ class DynamicSystemDatasetGenerator:
             secant_plane_derivatives=secant_plane_derivatives,
             accuracy=config['accuracy'],
             dt=config['dt'],
-            seed=config['seed']
+            seed=config['seed'],
+            reject_amplitude_above=config.get('reject_amplitude_above'),
         )
         
         # Восстанавливаем данные
