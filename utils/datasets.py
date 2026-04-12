@@ -5,7 +5,7 @@ import os
 import json
 import warnings
 
-from .trajectories import calculate_dynamic_regime
+from .trajectories import calculate_dynamic_regime, full_trajectory_ptp_norm
 
 
 def _point_in_axis_aligned_box(point: np.ndarray, ranges: List[Tuple[float, float]]) -> bool:
@@ -193,7 +193,9 @@ class DynamicSystemDatasetGenerator:
                  accuracy: float = 1e-3,
                  dt: float = 0.01,
                  seed: int = 52,
-                 reject_amplitude_above: Optional[float] = None):
+                 reject_amplitude_above: Optional[float] = None,
+                 reject_amplitude_burn_rk_steps: int = 0,
+                 reject_amplitude_record_rk_steps: int = 3000):
         """
         Параметры:
             evolution_operator: Функция эволюции системы: (state, params, dt) -> next_state
@@ -209,9 +211,13 @@ class DynamicSystemDatasetGenerator:
             accuracy: Точность для определения типа аттрактора
             dt: Шаг интегрирования
             seed: Seed для генератора случайных чисел
-            reject_amplitude_above: Если задано, траектории с амплитудой аттрактора на сечении
-                (как в ``calculate_dynamic_regime``: ||ptp||_2 по точкам сечения) >= порога
-                отбрасываются (например, «большой» предельный цикл при двухмасштабной динамике Чуа).
+            reject_amplitude_above: Если задано, траектории с амплитудой
+                ``full_trajectory_ptp_norm(...)`` (размах по хвосту RK-траектории) >= порога
+                отбрасываются.
+            reject_amplitude_burn_rk_steps: число шагов RK до начала окна, по которому считается
+                размах (трансиент в шагах интегрирования).
+            reject_amplitude_record_rk_steps: длина окна в шагах RK (>= 1); амплитуда =
+                ||ptp||_2 по ``n_record_rk_steps + 1`` состояниям после выгорания.
         """
         self.evolution_operator = evolution_operator
         self.right_part = right_part
@@ -227,6 +233,8 @@ class DynamicSystemDatasetGenerator:
         self.dt = dt
         self.seed = seed
         self.reject_amplitude_above = reject_amplitude_above
+        self.reject_amplitude_burn_rk_steps = int(reject_amplitude_burn_rk_steps)
+        self.reject_amplitude_record_rk_steps = int(reject_amplitude_record_rk_steps)
 
         self.rng = np.random.default_rng(seed)
         self.n_var = len(variables_ranges)
@@ -307,8 +315,18 @@ class DynamicSystemDatasetGenerator:
                             if regime.get("type") == "EP":
                                 info['rejected_fixed_points'] += 1
                             elif self.reject_amplitude_above is not None:
-                                amp = regime.get("amplitude")
-                                if amp is not None and amp >= self.reject_amplitude_above:
+                                amp = full_trajectory_ptp_norm(
+                                    self.evolution_operator,
+                                    x_init,
+                                    p_init,
+                                    self.dt,
+                                    self.reject_amplitude_burn_rk_steps,
+                                    self.reject_amplitude_record_rk_steps,
+                                    self.div_threshold,
+                                )
+                                if amp is None:
+                                    info['rejected_amplitude_divergence'] += 1
+                                elif amp >= self.reject_amplitude_above:
                                     info['rejected_large_amplitude'] += 1
                                 elif self._generate_trajectory_steps(x_init, p_init, X_list, y_list, info):
                                     info['accepted_trajectories'] += 1
@@ -349,6 +367,8 @@ class DynamicSystemDatasetGenerator:
         print(f"Генерация завершена. Всего образцов: {len(self.X)}")
         if info.get("rejected_large_amplitude"):
             print(f"Отброшено по амплитуде (>= {self.reject_amplitude_above}): {info['rejected_large_amplitude']}")
+        if info.get("rejected_amplitude_divergence"):
+            print(f"Отброшено из‑за расхождения при оценке амплитуды: {info['rejected_amplitude_divergence']}")
 
         return self.X, self.y, self.info
 
@@ -412,6 +432,7 @@ class DynamicSystemDatasetGenerator:
             'total_trajectories_processed': 0,
             'rejected_fixed_points': 0,
             'rejected_large_amplitude': 0,
+            'rejected_amplitude_divergence': 0,
             'divergence_trajs_number': 0,
             'accepted_trajectories': 0,
             'total_samples_generated': 0,
@@ -479,6 +500,8 @@ class DynamicSystemDatasetGenerator:
                 'has_secant_plane': self.secant_plane is not None,
                 'has_secant_plane_derivatives': self.secant_plane_derivatives is not None,
                 'reject_amplitude_above': self.reject_amplitude_above,
+                'reject_amplitude_burn_rk_steps': self.reject_amplitude_burn_rk_steps,
+                'reject_amplitude_record_rk_steps': self.reject_amplitude_record_rk_steps,
             }))
         )
         print(f"Датасет сохранен в {filepath}")
@@ -526,6 +549,8 @@ class DynamicSystemDatasetGenerator:
             dt=config['dt'],
             seed=config['seed'],
             reject_amplitude_above=config.get('reject_amplitude_above'),
+            reject_amplitude_burn_rk_steps=config.get('reject_amplitude_burn_rk_steps', 0),
+            reject_amplitude_record_rk_steps=config.get('reject_amplitude_record_rk_steps', 3000),
         )
         
         # Восстанавливаем данные

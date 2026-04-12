@@ -2,6 +2,7 @@ from .rk4 import rk4_step_vectorized_params
 from .trajectories import (
     pass_transient_process,
     get_attractor_trajectory,
+    full_trajectory_ptp_norm,
     grid_of_amplitude,
     grid_of_amplitude_basin,
     grid_of_amplitude_basin_over_initial_state,
@@ -30,6 +31,7 @@ from .nn_map_fixed_points import (
 )
 
 __all__ = ['rk4_step_vectorized_params', 'pass_transient_process', 'get_attractor_trajectory',
+           'full_trajectory_ptp_norm',
            'plot_trajectory', 'setup_logger', 'get_logger', 'grid_of_amplitude', 'grid_of_amplitude_basin',
            'grid_of_amplitude_basin_over_initial_state', 'grid_of_fixed_point_probability_over_params',
            'plot_heatmap', 'generate_pairs_dataset', 'plot_compare_trajectories',

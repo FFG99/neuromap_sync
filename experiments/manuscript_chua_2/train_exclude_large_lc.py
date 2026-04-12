@@ -36,6 +36,9 @@ from e2_chua_config import (
     N_TRANSIENT,
     DATASET_EXCLUDE_LARGE_NPZ,
     REJECT_AMPLITUDE_ABOVE,
+    AMPLITUDE_BURN_RK_STEPS,
+    AMPLITUDE_RECORD_RK_STEPS,
+    RK_DIVERGENCE_THRESHOLD,
 )
 
 if REJECT_AMPLITUDE_ABOVE is None:
@@ -74,7 +77,10 @@ generator = DynamicSystemDatasetGenerator(
     secant_plane_derivatives=secant_plane_derivatives,
     dt=DT,
     seed=SEED,
+    div_threshold=RK_DIVERGENCE_THRESHOLD,
     reject_amplitude_above=REJECT_AMPLITUDE_ABOVE,
+    reject_amplitude_burn_rk_steps=AMPLITUDE_BURN_RK_STEPS,
+    reject_amplitude_record_rk_steps=AMPLITUDE_RECORD_RK_STEPS,
 )
 X, y, info = generator.generate(target_samples=target_samples, n_jobs=-1)
 
@@ -90,6 +96,8 @@ print(
     info.get("rejected_fixed_points"),
     "| large amplitude rejected =",
     info.get("rejected_large_amplitude"),
+    "| RK divergence (amplitude probe) =",
+    info.get("rejected_amplitude_divergence"),
     "| accepted trajectories =",
     info.get("accepted_trajectories"),
     "| total processed =",

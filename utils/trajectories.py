@@ -75,6 +75,43 @@ def integrate_evolution_operator(
     return np.stack(trajectory, axis=0)
 
 
+def full_trajectory_ptp_norm(
+    evolution_operator,
+    state,
+    params,
+    dt: float,
+    n_burn_in_steps: int,
+    n_record_steps: int,
+    divergence_threshold: float,
+) -> Optional[float]:
+    """
+    Амплитуда по **полной** дискретной траектории (шаги ``evolution_operator``).
+
+    Интегрирует ``n_burn_in_steps + n_record_steps`` шагов; при выходе за
+    ``divergence_threshold`` возвращает ``None``. Иначе
+    ``||\\mathrm{ptp}(U)\\||_2``, где ``U`` — состояния на отрезке после выгорания
+    трансиента (хвост длины ``n_record_steps + 1`` точек, начиная с шага
+    ``n_burn_in_steps``).
+    """
+    n_total = int(n_burn_in_steps) + int(n_record_steps)
+    if n_total < 0:
+        raise ValueError("n_burn_in_steps + n_record_steps must be non-negative")
+    if n_record_steps < 1:
+        raise ValueError("n_record_steps must be >= 1 to form a span over time")
+    traj = integrate_evolution_operator(
+        evolution_operator,
+        state,
+        params,
+        dt,
+        n_total,
+        divergence_threshold,
+    )
+    if traj is None:
+        return None
+    tail = traj[int(n_burn_in_steps) :]
+    return float(np.linalg.norm(np.ptp(tail, axis=0)))
+
+
 def pass_transient_process(evolution_operator, state, params, dt, 
                            required_number_of_intersections, secant_plane,
                            fixed_point_threshold=1e-12, max_steps=100_000_000,
@@ -199,18 +236,15 @@ def calculate_dynamic_regime(evolution_operator, right_part,
     )
 
     if traj is None:
-        return {"type": "D", "amplitude": None}
+        return {"type": "D"}
 
-    traj_arr = np.asarray(traj, dtype=np.float64)
-    if traj_arr.shape[0] == 1:
-        return {"type": "EP", "amplitude": 0.0}
+    if len(traj) == 1:
+        return {"type": "EP"}
 
-    amplitude = float(np.linalg.norm(np.ptp(traj_arr, axis=0)))
+    if len(traj) < n_attractor:
+        return {"type": "P", "period": len(traj)}
 
-    if traj_arr.shape[0] < n_attractor:
-        return {"type": "P", "period": int(traj_arr.shape[0]), "amplitude": amplitude}
-
-    return {"type": "NP", "amplitude": amplitude}
+    return {"type": "NP"}
 
 
 def grid_of_amplitude(evolution_operator,

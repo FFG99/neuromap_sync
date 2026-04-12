@@ -5,8 +5,9 @@
 параметры согласованы с experiments/long_trajs_chua (фиксированные параметры —
 интервалы вида (a, a)).
 
-Порог REJECT_AMPLITUDE_ABOVE подбирается в amplitude_threshold_sweep.ipynb
-(амплитуда = ||ptp||_2 по точкам сечения Пуанкаре S = y, как в calculate_dynamic_regime).
+Порог REJECT_AMPLITUDE_ABOVE подбирается в amplitude_threshold_sweep.ipynb.
+Амплитуда: ||ptp(U)||_2 по окну полной RK-траектории (см. full_trajectory_ptp_norm:
+AMPLITUDE_BURN_RK_STEPS + AMPLITUDE_RECORD_RK_STEPS шагов).
 """
 
 SEED = 42
@@ -14,11 +15,11 @@ SEED = 42
 VARIABLES_RANGES = [(-15.0, 15.0), (-4.0, 4.0), (-18.0, 18.0)]
 
 PARAMETERS_RANGES = [
-    (8.4, 8.4),
-    (12.0, 12.0),
-    (0.0, 0.0),
-    (-0.12, -0.12),
-    (-1.15, -1.15),
+    (8.41, 8.41),
+    (12.23, 12.23),
+    (0.0435, 0.0435),
+    (-1.366, -1.366),
+    (-0.17, -0.17)
 ]
 
 NUM_OF_TRAJ = 12_500
@@ -38,6 +39,12 @@ VAL_EVERY = 1
 
 N_TRANSIENT = 200
 
+AMPLITUDE_BURN_RK_STEPS = 2000
+AMPLITUDE_RECORD_RK_STEPS = 4000
+
+RK_DIVERGENCE_THRESHOLD = 1e5
+
 DATASET_EXCLUDE_LARGE_NPZ = "datasets/chua_exclude_large_lc.npz"
 
-REJECT_AMPLITUDE_ABOVE = 3
+# Масштаб — по полной RK-траектории
+REJECT_AMPLITUDE_ABOVE = 60
