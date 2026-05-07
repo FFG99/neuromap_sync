@@ -101,6 +101,13 @@ class NeuroMapManuscriptEq8(pl.LightningModule):
         self.log("val_loss", loss, on_step=False, on_epoch=True, prog_bar=True)
         return loss
 
+    def on_train_epoch_end(self):
+        # Always log current learning rate for visibility.
+        optimizer = self.optimizers()
+        if optimizer is not None and len(optimizer.param_groups) > 0:
+            current_lr = optimizer.param_groups[0].get("lr", self.lr)
+            self.log("lr", current_lr, on_step=False, on_epoch=True, prog_bar=True, logger=True)
+
     def configure_optimizers(self):
         optimizer = torch.optim.Adam(self.parameters(), lr=self.lr)
         if hasattr(self.hparams, "lr_scheduler") and self.hparams.lr_scheduler:

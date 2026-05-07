@@ -5,7 +5,8 @@ Train-этапы запускаются в строгом paper-режиме:
 - `Nh=100`,
 - структура Eq.(8): отдельные параметры по координатам (`A_i, B_i, b_i, a_i, c_i, d_i, gamma_i`),
 - `Adam`, `lr=1e-3`,
-- без LR scheduler.
+- с `ReduceLROnPlateau` (`patience=10`, `factor=0.1`),
+- текущий `lr` логгируется каждый epoch в метрику `lr`.
 
 ## Model (3): vdp_mod1, параметры `(lambda, beta)`
 

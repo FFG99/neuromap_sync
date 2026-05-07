@@ -12,8 +12,11 @@ CHECKPOINT_DIR.mkdir(parents=True, exist_ok=True)
 DT = 0.01
 EPOCHS = 1000
 LR = 1e-3
-BATCH_SIZE = 256
+BATCH_SIZE = 1024
 VAL_SPLIT = 0.2
+LR_SCHEDULER = True
+LR_SCHEDULER_PATIENCE = 10
+LR_SCHEDULER_FACTOR = 0.1
 
 
 def load_dataset(path: Path):
@@ -55,7 +58,9 @@ def main() -> None:
         val_split=VAL_SPLIT,
         checkpoint_dir=str(CHECKPOINT_DIR),
         history_path=str(CHECKPOINT_DIR / "history.json"),
-        lr_scheduler=False,
+        lr_scheduler=LR_SCHEDULER,
+        lr_scheduler_patience=LR_SCHEDULER_PATIENCE,
+        lr_scheduler_factor=LR_SCHEDULER_FACTOR,
         val_every=1,
     )
 
