@@ -44,17 +44,15 @@ class NeuroMapManuscriptSubnets(pl.LightningModule):
         self.lr = lr
 
         self.logger_py = get_logger(__name__)
-        self.activation = nn.Tanh()
-
         self.subnets = nn.ModuleList([self._build_subnet() for _ in range(n_var)])
         self.criterion = nn.L1Loss()
 
     def _build_subnet(self):
         in_features = self.n_var + self.n_param
-        layers = [nn.Linear(in_features, self.hidden_size), self.activation]
+        layers = [nn.Linear(in_features, self.hidden_size), nn.Tanh()]
         for _ in range(max(0, self.num_hidden_layers - 1)):
             layers.append(nn.Linear(self.hidden_size, self.hidden_size))
-            layers.append(self.activation)
+            layers.append(nn.Tanh())
         layers.append(nn.Linear(self.hidden_size, 1))
         return nn.Sequential(*layers)
 
