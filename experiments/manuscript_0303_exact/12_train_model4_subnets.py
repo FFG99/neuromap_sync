@@ -14,6 +14,7 @@ EPOCHS = 1000
 LR = 1e-3
 BATCH_SIZE = 256
 VAL_SPLIT = 0.2
+NUM_HIDDEN_LAYERS = 1
 
 
 def load_dataset(path: Path):
@@ -43,7 +44,7 @@ def main() -> None:
             n_var=2,
             n_param=2,
             hidden_size=100,
-            num_hidden_layers=2,
+            num_hidden_layers=NUM_HIDDEN_LAYERS,
             dt=DT,
         )
 
@@ -56,9 +57,7 @@ def main() -> None:
         val_split=VAL_SPLIT,
         checkpoint_dir=str(CHECKPOINT_DIR),
         history_path=str(CHECKPOINT_DIR / "history.json"),
-        lr_scheduler=True,
-        lr_scheduler_patience=10,
-        lr_scheduler_factor=0.1,
+        lr_scheduler=False,
         val_every=1,
     )
 
