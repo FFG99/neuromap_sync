@@ -111,6 +111,7 @@ class NeuroMapManuscriptEq8(pl.LightningModule):
     def configure_optimizers(self):
         optimizer = torch.optim.Adam(self.parameters(), lr=self.lr)
         if hasattr(self.hparams, "lr_scheduler") and self.hparams.lr_scheduler:
+            scheduler_frequency = int(getattr(self.hparams, "lr_scheduler_frequency", 1))
             scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
                 optimizer,
                 mode="min",
@@ -123,7 +124,8 @@ class NeuroMapManuscriptEq8(pl.LightningModule):
                     "scheduler": scheduler,
                     "monitor": "val_loss",
                     "interval": "epoch",
-                    "frequency": 1,
+                    "frequency": max(1, scheduler_frequency),
+                    "strict": False,
                 },
             }
         return optimizer
@@ -155,6 +157,7 @@ class NeuroMapManuscriptEq8(pl.LightningModule):
             self.hparams.lr_scheduler = True
             self.hparams.lr_scheduler_patience = lr_scheduler_patience
             self.hparams.lr_scheduler_factor = lr_scheduler_factor
+            self.hparams.lr_scheduler_frequency = max(1, int(val_every))
 
         if ckpt_path is None and checkpoint_dir is not None:
             checkpoint_dir_path = Path(checkpoint_dir)
