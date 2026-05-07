@@ -4,7 +4,8 @@ from .coupled_oscillators import CoupledOscillators
 from .nm_manuscript import NeuroMapManuscript
 from .nm_manuscript_eml import NeuroMapManuscriptEML
 from .nm_manuscript_subnets import NeuroMapManuscriptSubnets
+from .nm_manuscript_eq8 import NeuroMapManuscriptEq8
 
 __all__ = ['NeuroMapOriginal', 'NeuroMapTargetNormalized',
            'CoupledOscillators',
-           'NeuroMapManuscript', 'NeuroMapManuscriptEML', 'NeuroMapManuscriptSubnets']
+           'NeuroMapManuscript', 'NeuroMapManuscriptEML', 'NeuroMapManuscriptSubnets', 'NeuroMapManuscriptEq8']

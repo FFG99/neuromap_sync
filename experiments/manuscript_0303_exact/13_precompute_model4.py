@@ -3,7 +3,7 @@ from pathlib import Path
 
 import numpy as np
 
-from neuromaps import NeuroMapManuscriptSubnets
+from neuromaps import NeuroMapManuscriptEq8
 from systems.vdp_mod2 import vdp_mod2_rk4, vdp_mod2_right_part
 from utils import (
     grid_of_amplitude_basin_over_initial_state,
@@ -21,11 +21,11 @@ MU = 3.0
 
 
 def main() -> None:
-    model_path = ARTIFACTS_DIR / "checkpoints_subnets" / "model.ckpt"
+    model_path = ARTIFACTS_DIR / "checkpoints_eq8" / "model.ckpt"
     if not model_path.is_file():
         raise FileNotFoundError("Run 12_train_model4_subnets.py first.")
 
-    model = NeuroMapManuscriptSubnets.load(str(model_path), device="cpu")
+    model = NeuroMapManuscriptEq8.load(str(model_path), device="cpu")
 
     x_grid = np.linspace(-3.3, 3.3, 100)
     y_grid = np.linspace(-29.0, 29.0, 100)

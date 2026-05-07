@@ -1,9 +1,9 @@
 # Manuscript-0303 Exact Stages
 
-Поэтапный репрод с архитектурой `NeuroMapManuscriptSubnets`.
+Поэтапный репрод с архитектурой `NeuroMapManuscriptEq8`.
 Train-этапы запускаются в строгом paper-режиме:
 - `Nh=100`,
-- `num_hidden_layers=1` (двухслойная сеть в смысле статьи),
+- структура Eq.(8): отдельные параметры по координатам (`A_i, B_i, b_i, a_i, c_i, d_i, gamma_i`),
 - `Adam`, `lr=1e-3`,
 - без LR scheduler.
 
@@ -15,14 +15,14 @@ Train-этапы запускаются в строгом paper-режиме:
 python experiments/manuscript_0303_exact/01_generate_dataset_model3.py
 ```
 
-2) Обучение Subnets-модели:
+2) Обучение Eq8-модели:
 
 ```bash
 python experiments/manuscript_0303_exact/02_train_model3_subnets.py
 ```
 
 Перед повторным «чистым» запуском удалите старые чекпоинты:
-`experiments/manuscript_0303_exact/artifacts/model3/checkpoints_subnets/`
+`experiments/manuscript_0303_exact/artifacts/model3/checkpoints_eq8/`
 
 3) Предвычисление артефактов статьи:
 
@@ -38,14 +38,14 @@ python experiments/manuscript_0303_exact/03_precompute_model3.py
 python experiments/manuscript_0303_exact/11_generate_dataset_model4.py
 ```
 
-2) Обучение Subnets-модели:
+2) Обучение Eq8-модели:
 
 ```bash
 python experiments/manuscript_0303_exact/12_train_model4_subnets.py
 ```
 
 Перед повторным «чистым» запуском удалите старые чекпоинты:
-`experiments/manuscript_0303_exact/artifacts/model4/checkpoints_subnets/`
+`experiments/manuscript_0303_exact/artifacts/model4/checkpoints_eq8/`
 
 3) Предвычисление артефактов статьи:
 

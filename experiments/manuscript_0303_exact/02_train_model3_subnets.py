@@ -3,10 +3,10 @@ from pathlib import Path
 
 import numpy as np
 
-from neuromaps import NeuroMapManuscriptSubnets
+from neuromaps import NeuroMapManuscriptEq8
 
 ARTIFACTS_DIR = Path("experiments/manuscript_0303_exact/artifacts/model3")
-CHECKPOINT_DIR = ARTIFACTS_DIR / "checkpoints_subnets"
+CHECKPOINT_DIR = ARTIFACTS_DIR / "checkpoints_eq8"
 CHECKPOINT_DIR.mkdir(parents=True, exist_ok=True)
 
 DT = 0.01
@@ -14,7 +14,6 @@ EPOCHS = 1000
 LR = 1e-3
 BATCH_SIZE = 256
 VAL_SPLIT = 0.2
-NUM_HIDDEN_LAYERS = 1
 
 
 def load_dataset(path: Path):
@@ -37,14 +36,13 @@ def main() -> None:
     if checkpoint_files:
         latest_ckpt = checkpoint_files[-1]
         print(f"Resume from checkpoint: {latest_ckpt}")
-        model = NeuroMapManuscriptSubnets.load(str(latest_ckpt))
+        model = NeuroMapManuscriptEq8.load(str(latest_ckpt))
     else:
-        print("Create NeuroMapManuscriptSubnets")
-        model = NeuroMapManuscriptSubnets(
+        print("Create NeuroMapManuscriptEq8")
+        model = NeuroMapManuscriptEq8(
             n_var=2,
             n_param=2,
             hidden_size=100,
-            num_hidden_layers=NUM_HIDDEN_LAYERS,
             dt=DT,
         )
 
