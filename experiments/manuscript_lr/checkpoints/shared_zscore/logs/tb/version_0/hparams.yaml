@@ -1,0 +1,8 @@
+dt: 0.01
+hidden_size: 100
+lr: 0.001
+n_param: 2
+n_var: 2
+norm_mode: zscore
+num_hidden_layers: 2
+use_subnets: false
